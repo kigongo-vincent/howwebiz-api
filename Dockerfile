@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.26.1-alpine AS builder
+FROM golang:1.26.4-alpine AS builder
 
 WORKDIR /app
 
@@ -16,7 +16,8 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main .
 # Final stage
 FROM alpine:latest
 
-RUN apk --no-cache add ca-certificates
+# ffmpeg (includes ffprobe) is required by the media pipeline
+RUN apk --no-cache add ca-certificates ffmpeg
 
 WORKDIR /root/
 
