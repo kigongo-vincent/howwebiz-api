@@ -1,0 +1,8 @@
+.env
+.env.prod
+.env.dev
+tmp
+*.db
+*.db-wal
+*.db-shm
+/howwebiz-api

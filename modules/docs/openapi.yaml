@@ -1,0 +1,1181 @@
+openapi: 3.0.3
+info:
+  title: howwebiz-api
+  version: 1.0.0
+  description: |
+    Crawls Ugandan music sources and serves the results as paginated JSON.
+
+    **Start here: `GET /api/v1/songs`**, the aggregated catalog. Every provider's copy of a song is merged into
+    one entry (matched on normalized artist + title), and a text search also asks every provider live.
+
+    | Source | How | Tag |
+    |---|---|---|
+    | [howwe.ug](https://www.howwe.ug) | HTML pages: Hot 100, `/audio/*` lists, the full catalog via `/genres` | howwe |
+    | [audio.com](https://audio.com) | Official public API (OAuth) **or** website pages behind a block counter | audio.com |
+    | [momuziki.com](https://www.momuziki.com) | HTML pages: categories, songs, search | momuziki |
+    | [pearltunes.com](https://pearltunes.com) | HTML pages (generic site crawler) | providers |
+    | [ugamusic.net](https://ugamusic.net) | HTML pages with embedded page data (generic site crawler) | providers |
+
+    **Responses** use one envelope: `{ "data": …, "msg": "…", "pagination": {…}, "meta": {…} }`.
+    Errors carry a `msg` and an HTTP status.
+    **Paging**: `?page=` (from 1) and `?limit=` (1–100, default 20) unless noted.
+
+    **Auth**: when the server sets `API_KEY`, endpoints marked 🔒 need the header `X-API-Key`.
+
+    Crawls run in the background: a `POST` returns **202** with the run; follow it at
+    `GET /api/v1/crawl/runs/{id}`. Each source runs one crawl at a time (**409** otherwise).
+servers:
+  - url: /
+tags:
+  - name: songs
+    description: The aggregated catalog — one entry per song across every provider
+  - name: providers
+    description: Registered providers, and crawl control for the generic HTML-site providers (pearltunes, ugamusic)
+  - name: system
+  - name: howwe
+    description: howwe.ug songs, charts, genres and search
+  - name: howwe crawl
+    description: Crawl control for howwe.ug (lists + full catalog) and the shared run history
+  - name: audio.com
+    description: audio.com through its official public API (OAuth 2.1 + PKCE; 60 requests/minute)
+  - name: audio.com web
+    description: audio.com website pages, behind the block counter / circuit breaker
+  - name: momuziki
+    description: momuziki.com (HTML pages, behind the block counter)
+
+components:
+  securitySchemes:
+    ApiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: Required only when the server sets `API_KEY`.
+
+  parameters:
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    Limit:
+      name: limit
+      in: query
+      description: Page size (max 100).
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    HasAudio:
+      name: hasAudio
+      in: query
+      description: 'Songs with (true, the default) or without (false) an audio URL. Provider views keep songs whose mp3 is still being crawled; false shows them. The aggregated catalog holds only songs with audio.'
+      schema: { type: boolean, default: true }
+
+  responses:
+    BadRequest:
+      description: Invalid parameter or body.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    NotFound:
+      description: Not found.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Unauthorized:
+      description: Missing or invalid `X-API-Key` (only when `API_KEY` is set).
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Busy:
+      description: A crawl of this source is already running.
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Error'
+              - type: object
+                properties:
+                  data:
+                    type: object
+                    properties: { runId: { type: integer } }
+    Paused:
+      description: The source is paused by its block counter (circuit open) or the site is blocking requests.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    RunStarted:
+      description: Crawl started in the background. `Location` points to the run.
+      headers:
+        Location: { schema: { type: string }, description: '/api/v1/crawl/runs/{id}' }
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties: { data: { $ref: '#/components/schemas/CrawlRun' } }
+    Status:
+      description: Status document (shape described in the operation).
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties: { data: { type: object, additionalProperties: true } }
+
+  schemas:
+    Envelope:
+      type: object
+      properties:
+        data: {}
+        msg: { type: string }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+        meta: { type: object, additionalProperties: true }
+    Error:
+      type: object
+      properties:
+        data: { nullable: true }
+        msg: { type: string, example: song not found }
+    Message:
+      type: object
+      properties:
+        data: { nullable: true }
+        msg: { type: string }
+    Pagination:
+      type: object
+      properties:
+        page: { type: integer }
+        limit: { type: integer }
+        total: { type: integer }
+        totalPages: { type: integer }
+        hasMore: { type: boolean }
+
+    # ---------- aggregated catalog ----------
+    CatalogSong:
+      type: object
+      description: One song, merged from every provider that has it. Display fields come from the highest-priority provider that has them.
+      properties:
+        id: { type: integer }
+        title: { type: string, example: Nassanga (Remix) }
+        artist: { type: string, example: Kalifah AgaNaga, description: Primary artist. }
+        featured: { type: array, items: { type: string }, example: [Eddy Kenzo, Winnie Nwagi] }
+        genre: { type: string }
+        coverUrl: { type: string }
+        audioUrl: { type: string, description: 'Best playable/downloadable copy (provider priority order).' }
+        durationMs: { type: integer }
+        plays: { type: integer, description: Sum over providers that report plays. }
+        providers: { type: array, items: { type: string }, example: [howwe, ugamusic, momuziki] }
+        sourceCount: { type: integer }
+        releasedAt: { type: string, format: date-time, nullable: true }
+        firstSeenAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        sources: { type: array, items: { $ref: '#/components/schemas/CatalogSource' }, description: Provider copies, best first. }
+    CatalogSource:
+      type: object
+      properties:
+        provider: { type: string, example: momuziki }
+        externalId: { type: string, description: The provider's own id. }
+        title: { type: string }
+        artist: { type: string }
+        audioUrl: { type: string }
+        coverUrl: { type: string }
+        pageUrl: { type: string }
+        durationMs: { type: integer }
+        plays: { type: integer, nullable: true }
+        genre: { type: string }
+        releasedAt: { type: string, format: date-time, nullable: true }
+        providerUpdatedAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ProviderSearch:
+      type: object
+      description: What one provider's live search did for this request.
+      properties:
+        provider: { type: string }
+        status: { type: string, enum: [ok, cached, skipped, error, timeout] }
+        results: { type: integer }
+        tookMs: { type: integer }
+        error: { type: string }
+    IngestStats:
+      type: object
+      properties:
+        inserted: { type: integer }
+        updated: { type: integer }
+        unchanged: { type: integer }
+        newSongs: { type: integer }
+        attached: { type: integer, description: New provider copies merged into an existing entry. }
+        noAudio: { type: integer, description: 'Rejected because they had no audio URL (the catalog stores playable songs only).' }
+    Provider:
+      type: object
+      properties:
+        name: { type: string }
+        site: { type: string }
+        ingest: { type: string, enum: [index, push], description: '`index`: own store pulled by the catalog indexer; `push`: its crawler writes to the catalog directly.' }
+        liveSearch: { type: boolean }
+        description: { type: string }
+        sources: { type: integer, description: Provider copies in the catalog. }
+        indexedUpTo: { type: string, format: date-time, nullable: true }
+    SiteCrawlRequest:
+      type: object
+      properties:
+        maxPages: { type: integer, minimum: 0, description: Listing pages; 0 = unlimited. }
+        maxProbes: { type: integer, minimum: 0, description: 'Song pages fetched by id (sites that have them); 0 = unlimited.' }
+        refresh: { type: boolean, description: Start a full listing re-walk now (once synced). }
+        reset: { type: boolean }
+
+    # ---------- howwe.ug ----------
+    Song:
+      type: object
+      description: A howwe.ug song (`id` is howwe's own song id).
+      properties:
+        id: { type: integer, example: 126112 }
+        title: { type: string, example: Nassanga (Remix) }
+        slug: { type: string }
+        artist: { type: string }
+        artistId: { type: integer }
+        artistSlug: { type: string }
+        pageUrl: { type: string, format: uri }
+        coverUrl: { type: string }
+        genre: { type: string, description: 'From /genres pages; empty until a genre walk has seen the song.' }
+        audioUrl: { type: string, description: 'mp3 URL (empty until the song page has been fetched).' }
+        fileSize: { type: string, example: 3.7 MB }
+        addedDate: { type: string, example: July 14, 2026 }
+        album: { type: string }
+        albumUrl: { type: string }
+        videoUrl: { type: string }
+        rating: { type: number, nullable: true }
+        votes: { type: integer, nullable: true }
+        detailCheckedAt: { type: string, format: date-time, nullable: true }
+        detailChangedAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    Genre:
+      type: object
+      properties:
+        name: { type: string, example: AfroBeat }
+        title: { type: string }
+        path: { type: string, example: /genres/AfroBeat }
+        siteCount: { type: integer, description: 'Songs howwe.ug reports for the genre.' }
+        songs: { type: integer, description: 'Songs stored locally for the genre.' }
+        updatedAt: { type: string, format: date-time }
+    Snapshot:
+      type: object
+      description: One distinct version of a list; reused (lastSeenAt moves) while the list is unchanged.
+      properties:
+        id: { type: integer }
+        list: { type: string, example: hot100 }
+        pages: { type: integer }
+        entryCount: { type: integer }
+        firstSeenAt: { type: string, format: date-time }
+        lastSeenAt: { type: string, format: date-time }
+    ChartEntry:
+      type: object
+      properties:
+        position: { type: integer }
+        songId: { type: integer }
+        song: { $ref: '#/components/schemas/Song' }
+        trend: { type: string, enum: [up, down, steady, new], description: 'Hot 100 only. `new` includes re-entries.' }
+        lastDay: { type: integer, nullable: true }
+        lastWeek: { type: integer, nullable: true }
+        peak: { type: integer, nullable: true }
+        weeksOnChart: { type: integer, nullable: true }
+    HowweSearchHit:
+      type: object
+      description: A result from howwe.ug's own (Google Programmable) search engine.
+      properties:
+        kind: { type: string, enum: [song, artist, video, news, page] }
+        title: { type: string }
+        link: { type: string }
+        snippet: { type: string }
+        songId: { type: integer }
+        song: { $ref: '#/components/schemas/Song' }
+
+    # ---------- runs ----------
+    CrawlRun:
+      type: object
+      properties:
+        id: { type: integer }
+        kind: { type: string, example: lists, description: 'lists | catalog | audiocom | audiocom-web | momuziki | site:<provider>' }
+        trigger: { type: string, enum: [manual, cron, startup, test] }
+        status: { type: string, enum: [running, succeeded, partial, failed] }
+        options: { type: object, additionalProperties: true, description: 'The options the run was started with.' }
+        stats: { $ref: '#/components/schemas/Stats' }
+        errors: { type: array, items: { type: string }, description: 'First 100 errors; see stats.errorsTotal.' }
+        startedAt: { type: string, format: date-time }
+        finishedAt: { type: string, format: date-time, nullable: true }
+    Stats:
+      type: object
+      description: Work done and work saved by each cache layer. Updated every 15s while running. Counters a source doesn't use stay 0.
+      properties:
+        pagesFetched: { type: integer }
+        pagesUnchanged: { type: integer, description: 'Fetched, identical to last time → no writes.' }
+        pagesSkipped: { type: integer, description: 'Not fetched (newest-first list unchanged).' }
+        songsSeen: { type: integer }
+        songsInserted: { type: integer }
+        songsUpdated: { type: integer }
+        songsUnchanged: { type: integer }
+        snapshotsCreated: { type: integer }
+        snapshotsReused: { type: integer }
+        detailsDue: { type: integer }
+        detailsNotDue: { type: integer }
+        detailsDeferred: { type: integer }
+        detailsFetched: { type: integer }
+        detailsChanged: { type: integer }
+        detailsUnchanged: { type: integer }
+        probed: { type: integer, description: 'Song ids fetched directly (in no listing).' }
+        probeFound: { type: integer }
+        probeSkipped: { type: integer }
+        genresCompleted: { type: integer }
+        errorsTotal: { type: integer }
+
+    # ---------- audio.com ----------
+    AudioTrack:
+      type: object
+      properties:
+        id: { type: string }
+        title: { type: string }
+        slug: { type: string }
+        username: { type: string }
+        authorName: { type: string }
+        description: { type: string }
+        category: { type: string, example: music }
+        license: { type: string, example: cc-by }
+        tags: { type: array, items: { type: string } }
+        imageUrl: { type: string }
+        playUrl: { type: string, description: 'Streamable mp3.' }
+        waveformUrl: { type: string }
+        durationMs: { type: integer }
+        downloadable: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        modifiedAt: { type: string, format: date-time }
+        firstSeenAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    AudioSearchResult:
+      type: object
+      description: As returned by audio.com's API; `model` follows `type` (audio, author or collection).
+      properties:
+        type: { type: string, enum: [audio, author, collection] }
+        model: { type: object, additionalProperties: true }
+
+    # ---------- momuziki.com ----------
+    MomuzikiSong:
+      type: object
+      properties:
+        id: { type: integer, description: 'momuziki''s song.php?id.' }
+        title: { type: string }
+        artist: { type: string }
+        categoryId: { type: integer, description: '0 = found by the id sweep, in no category.' }
+        pageUrl: { type: string }
+        thumbUrl: { type: string }
+        imageUrl: { type: string }
+        audioUrl: { type: string, description: 'Direct mp3 (URL-escaped).' }
+        plays: { type: integer, nullable: true }
+        detailCheckedAt: { type: string, format: date-time, nullable: true }
+        firstSeenAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    MomuzikiCategory:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string, example: Afro Beat }
+        imageUrl: { type: string }
+        songs: { type: integer, description: 'Songs stored in this category.' }
+        updatedAt: { type: string, format: date-time }
+
+    # ---------- request bodies ----------
+    ListsCrawlRequest:
+      type: object
+      properties:
+        targets:
+          type: array
+          items: { type: string, enum: [hot100, audio-new, audio-day, audio-week, audio-month, audio-year, audio-alltime] }
+        pages: { type: integer, minimum: 1, maximum: 500, description: 'Listing pages per paginated target.' }
+        fetchDetails: { type: boolean, description: 'Visit song pages (mp3 URL, album, rating).' }
+        force: { type: boolean, description: 'Bypass every cache layer.' }
+    CatalogCrawlRequest:
+      type: object
+      properties:
+        maxPages: { type: integer, minimum: 0, description: '0 = unlimited.' }
+        maxProbes: { type: integer, minimum: 0 }
+        maxDetails: { type: integer, minimum: 0 }
+        refreshGenres: { type: boolean, description: 'Start a genre re-walk now (once synced).' }
+        reset: { type: boolean }
+    AudioCrawlRequest:
+      type: object
+      properties:
+        tags: { type: array, items: { type: string }, description: 'Walk these as `#tag` feeds (genre-like). Default: AUDIOCOM_TAGS.' }
+        skipAll: { type: boolean, description: 'Skip the browse-everything feed.' }
+        maxPages: { type: integer, minimum: 0, description: 'API pages (10 results each); 0 = unlimited.' }
+        reset: { type: boolean }
+    AudioWebCrawlRequest:
+      type: object
+      properties:
+        genres: { type: array, items: { type: string }, description: 'Genre slugs; empty = every genre linked from /genres.' }
+        maxPages: { type: integer, minimum: 0 }
+        reset: { type: boolean }
+    MomuzikiCrawlRequest:
+      type: object
+      properties:
+        maxPages: { type: integer, minimum: 0, description: 'Category pages; 0 = unlimited.' }
+        maxProbes: { type: integer, minimum: 0, description: 'song.php ids probed (in no category).' }
+        maxDetails: { type: integer, minimum: 0, description: 'Song pages for play counts and covers.' }
+        refreshCategories: { type: boolean }
+        reset: { type: boolean }
+
+paths:
+  # ======================= aggregated catalog =======================
+  /api/v1/songs:
+    get:
+      tags: [songs]
+      summary: Songs from every provider, merged — the main entry point
+      description: |
+        One entry per song across howwe.ug, ugamusic.net, pearltunes.com, momuziki.com and audio.com.
+        **Only songs with an audio URL are stored and served.**
+        Copies are matched on normalized primary artist + title (case, accents, punctuation, "(Official Audio)",
+        "ft. …" ignored; remix/live/acoustic versions kept apart).
+
+        **Live search** (`live=auto`, the default): the first page of a text search also asks every provider's
+        own search in parallel (per-provider timeout, results cached per provider+query), ingests what they
+        return, and then answers from the merged catalog. `meta.live` reports each provider's outcome.
+      parameters:
+        - { name: q, in: query, description: 'Title, artist or featured artist (accent/punctuation-insensitive; all words must match).', schema: { type: string } }
+        - { name: artist, in: query, description: Primary artist, schema: { type: string } }
+        - { name: genre, in: query, schema: { type: string } }
+        - { name: provider, in: query, description: Only songs available from this provider, schema: { type: string, enum: [howwe, ugamusic, pearltunes, momuziki, audiocom] } }
+        - $ref: '#/components/parameters/HasAudio'
+        - { name: sort, in: query, schema: { type: string, enum: [relevance, recent, plays, title] }, description: 'Default: relevance with q, else recent.' }
+        - { name: live, in: query, schema: { type: string, enum: [auto, 'true', 'false'], default: auto } }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Songs. With a live search, `meta.live` lists each provider's status and `meta.ingested` what was added.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/CatalogSong' } }
+                      meta:
+                        type: object
+                        properties:
+                          query: { type: string }
+                          live: { type: array, items: { $ref: '#/components/schemas/ProviderSearch' } }
+                          ingested: { $ref: '#/components/schemas/IngestStats' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /api/v1/songs/{id}:
+    get:
+      tags: [songs]
+      summary: One aggregated song with every provider copy
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          description: Song
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties: { data: { $ref: '#/components/schemas/CatalogSong' } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/songs/cleanup:
+    post:
+      tags: [songs]
+      summary: 🔒 Remove stored songs without an audio URL
+      description: |
+        The catalog stores only songs with an audio URL; tracks without one are rejected at ingest.
+        This removes data stored before that rule (it also runs automatically at server start):
+        sources without audio are deleted, their songs re-aggregated, songs left without a source deleted. Idempotent.
+      security: [{ ApiKey: [] }]
+      responses:
+        '200':
+          description: What was removed
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          sourcesRemoved: { type: integer }
+                          songsRemoved: { type: integer }
+                          songsUpdated: { type: integer }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/v1/songs/reindex:
+    post:
+      tags: [songs]
+      summary: 🔒 Pull changes from provider stores into the catalog now
+      description: The indexer also runs every CATALOG_INDEX_INTERVAL (default 2m); this runs it immediately.
+      security: [{ ApiKey: [] }]
+      responses:
+        '200':
+          description: Per-provider result
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            provider: { type: string }
+                            stats: { $ref: '#/components/schemas/IngestStats' }
+                            error: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  # ======================= providers =======================
+  /api/v1/providers:
+    get:
+      tags: [providers]
+      summary: Every provider and how much of the catalog it backs
+      responses:
+        '200':
+          description: Providers; `meta` has songs, songsOnSeveralProviders, priority, lastIndexedAt.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties: { data: { type: array, items: { $ref: '#/components/schemas/Provider' } } }
+  /api/v1/providers/{name}/status:
+    get:
+      tags: [providers]
+      summary: Crawl state of a generic HTML-site provider
+      description: '`data`: provider, cursor (phase listing|sweep|synced, nextPage, sweepNextId), complete, songs, withAudio, highestId, capabilities, running, lastRun, defaults, guard {paused, pausedUntil, health}.'
+      parameters:
+        - { name: name, in: path, required: true, schema: { type: string, enum: [pearltunes, ugamusic] } }
+      responses:
+        '200': { $ref: '#/components/responses/Status' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/providers/{name}/crawl:
+    post:
+      tags: [providers]
+      summary: 🔒 Advance a generic HTML-site crawl (resumable)
+      description: Listing to its end → (sites with song pages by id) fetch every id not yet stored with audio, then probe ahead → later runs sync incrementally. Omitted fields use <PROVIDER>_* defaults.
+      security: [{ ApiKey: [] }]
+      parameters:
+        - { name: name, in: path, required: true, schema: { type: string, enum: [pearltunes, ugamusic] } }
+      requestBody:
+        required: false
+        content: { application/json: { schema: { $ref: '#/components/schemas/SiteCrawlRequest' } } }
+      responses:
+        '202': { $ref: '#/components/responses/RunStarted' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Busy' }
+        '503': { $ref: '#/components/responses/Paused' }
+  /api/v1/providers/{name}/guard/reset:
+    post:
+      tags: [providers]
+      summary: 🔒 Clear a provider's block-counter pause
+      security: [{ ApiKey: [] }]
+      parameters:
+        - { name: name, in: path, required: true, schema: { type: string, enum: [pearltunes, ugamusic] } }
+      responses:
+        '200': { description: Reset, content: { application/json: { schema: { $ref: '#/components/schemas/Message' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  # ======================= system =======================
+  /api/v1/health:
+    get:
+      tags: [system]
+      summary: Health check (includes a database ping)
+      responses:
+        '200': { description: 'OK', content: { application/json: { schema: { $ref: '#/components/schemas/Message' } } } }
+        '503': { description: 'Database unreachable', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  # ======================= howwe =======================
+  /api/v1/howwe/songs:
+    get:
+      tags: [howwe]
+      summary: List howwe.ug songs (provider view; the aggregated catalog is /api/v1/songs)
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - { name: q, in: query, description: 'Title or artist contains', schema: { type: string } }
+        - { name: artistId, in: query, schema: { type: integer } }
+        - { name: genre, in: query, description: 'howwe genre name, e.g. AfroBeat', schema: { type: string } }
+        - $ref: '#/components/parameters/HasAudio'
+        - { name: sort, in: query, schema: { type: string, enum: [recent, title, rating, votes], default: recent } }
+      responses:
+        '200':
+          description: Songs
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties: { data: { type: array, items: { $ref: '#/components/schemas/Song' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /api/v1/howwe/songs/{id}:
+    get:
+      tags: [howwe]
+      summary: Get a howwe.ug song
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          description: Song
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties: { data: { $ref: '#/components/schemas/Song' } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/genres:
+    get:
+      tags: [howwe]
+      summary: List howwe.ug genres with site vs stored song counts
+      responses:
+        '200':
+          description: Genres
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties: { data: { type: array, items: { $ref: '#/components/schemas/Genre' } } }
+  /api/v1/genres/{name}/songs:
+    get:
+      tags: [howwe]
+      summary: Songs of a genre
+      description: Same as `/api/v1/howwe/songs?genre={name}`, so all its filters, sorting and paging apply.
+      parameters:
+        - { name: name, in: path, required: true, schema: { type: string, example: AfroBeat } }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - { name: q, in: query, schema: { type: string } }
+        - { name: artistId, in: query, schema: { type: integer } }
+        - $ref: '#/components/parameters/HasAudio'
+        - { name: sort, in: query, schema: { type: string, enum: [recent, title, rating, votes], default: recent } }
+      responses:
+        '200':
+          description: Songs
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties: { data: { type: array, items: { $ref: '#/components/schemas/Song' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/lists:
+    get:
+      tags: [howwe]
+      summary: Every crawlable list with its current snapshot
+      responses:
+        '200':
+          description: Lists
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            name: { type: string }
+                            latest: { allOf: [{ $ref: '#/components/schemas/Snapshot' }], nullable: true }
+  /api/v1/lists/{list}:
+    get:
+      tags: [howwe]
+      summary: Entries of a list (chart) with their songs
+      parameters:
+        - name: list
+          in: path
+          required: true
+          schema: { type: string, enum: [hot100, audio-new, audio-day, audio-week, audio-month, audio-year, audio-alltime] }
+        - { name: date, in: query, description: 'The list as it was at the end of this day (YYYY-MM-DD, in CRON_TZ). Default: now.', schema: { type: string, format: date } }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200': &listEntries
+          description: Entries; `meta` has `list` and the `snapshot` they come from.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/ChartEntry' } }
+                      meta:
+                        type: object
+                        properties:
+                          list: { type: string }
+                          snapshot: { $ref: '#/components/schemas/Snapshot' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/lists/{list}/snapshots:
+    get:
+      tags: [howwe]
+      summary: Distinct versions of a list, newest first
+      parameters:
+        - { name: list, in: path, required: true, schema: { type: string } }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Snapshots
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties: { data: { type: array, items: { $ref: '#/components/schemas/Snapshot' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/charts/hot100:
+    get:
+      tags: [howwe]
+      summary: Hot 100 (shortcut for /api/v1/lists/hot100)
+      parameters:
+        - { name: date, in: query, schema: { type: string, format: date } }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200': *listEntries
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/howwe/search:
+    get:
+      tags: [howwe]
+      summary: Search howwe.ug only (the aggregated search is /api/v1/songs?q=)
+      description: |
+        - `local`: the crawled catalog. Every word must match the title or artist, and the best matches rank first.
+          On Postgres, a fuzzy (trigram) fallback handles typos when nothing matches.
+        - `howwe`: howwe.ug's own search engine (Google Programmable Search) through the Custom Search JSON API.
+          Needs `GOOGLE_CSE_KEY`; 10 per page, at most 100 results; responses cached. The Google API is discontinued on 2027-01-01.
+        - `auto` (default): `howwe` when a key is configured, else `local`.
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string, maxLength: 200 } }
+        - { name: source, in: query, schema: { type: string, enum: [auto, local, howwe], default: auto } }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: '`data` is Song[] for local, HowweSearchHit[] for howwe; `meta.source` says which.'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          oneOf:
+                            - $ref: '#/components/schemas/Song'
+                            - $ref: '#/components/schemas/HowweSearchHit'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '501': { description: 'source=howwe without GOOGLE_CSE_KEY', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '502': { description: 'Google search failed (quota, key, past result 100)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  # ======================= howwe crawl =======================
+  /api/v1/crawl:
+    post:
+      tags: [howwe crawl]
+      summary: 🔒 Start a howwe.ug list crawl
+      security: [{ ApiKey: [] }]
+      requestBody:
+        required: false
+        description: Omitted fields use the configured defaults (CRAWL_TARGETS, CRAWL_PAGES).
+        content: { application/json: { schema: { $ref: '#/components/schemas/ListsCrawlRequest' } } }
+      responses:
+        '202': { $ref: '#/components/responses/RunStarted' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Busy' }
+  /api/v1/crawl/status:
+    get:
+      tags: [howwe crawl]
+      summary: howwe crawler state
+      description: '`data`: running, runId, cronEnabled, nextScheduledAt, targets, defaults.'
+      responses:
+        '200': { $ref: '#/components/responses/Status' }
+  /api/v1/crawl/runs:
+    get:
+      tags: [howwe crawl]
+      summary: Crawl run history (every source), newest first
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [running, succeeded, partial, failed] } }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Runs
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties: { data: { type: array, items: { $ref: '#/components/schemas/CrawlRun' } } }
+  /api/v1/crawl/runs/{id}:
+    get:
+      tags: [howwe crawl]
+      summary: One crawl run (any source)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          description: Run
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties: { data: { $ref: '#/components/schemas/CrawlRun' } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/crawl/catalog:
+    get:
+      tags: [howwe crawl]
+      summary: Full-catalog progress
+      description: '`data`: cursor (phase genres|sweep|synced, current genre/page), songs (counts), missingIds, siteTotal, coverage, complete, lastRun, running, defaults.'
+      responses:
+        '200': { $ref: '#/components/responses/Status' }
+    post:
+      tags: [howwe crawl]
+      summary: 🔒 Advance the full-catalog crawl (resumable)
+      description: Walks every genre on /genres, then probes ids no genre listed, then fetches song pages that are due. Omitted fields use CATALOG_* defaults.
+      security: [{ ApiKey: [] }]
+      requestBody:
+        required: false
+        content: { application/json: { schema: { $ref: '#/components/schemas/CatalogCrawlRequest' } } }
+      responses:
+        '202': { $ref: '#/components/responses/RunStarted' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Busy' }
+
+  # ======================= audio.com (API) =======================
+  /api/v1/audiocom/status:
+    get:
+      tags: [audio.com]
+      summary: audio.com connection and crawl state
+      description: '`data`: connected, connectedAt, tracks, withAudio, feeds, running, lastRun, ratePerMin, tags.'
+      responses:
+        '200': { $ref: '#/components/responses/Status' }
+  /api/v1/audiocom/connect:
+    get:
+      tags: [audio.com]
+      summary: 🔒 Start the OAuth sign-in
+      description: Registers this server with audio.com if needed and returns the URL to open in a browser. With `redirect=true` it redirects straight there.
+      security: [{ ApiKey: [] }]
+      parameters:
+        - { name: redirect, in: query, schema: { type: boolean } }
+      responses:
+        '200':
+          description: Authorize URL
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          authorizeUrl: { type: string }
+                          redirectUri: { type: string }
+        '302': { description: 'Redirect to audio.com sign-in (redirect=true)' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '502': { description: 'audio.com discovery or registration failed', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  /api/v1/audiocom/callback:
+    get:
+      tags: [audio.com]
+      summary: OAuth redirect target (audio.com sends the browser here)
+      parameters:
+        - { name: code, in: query, schema: { type: string } }
+        - { name: state, in: query, schema: { type: string } }
+        - { name: error, in: query, schema: { type: string } }
+        - { name: error_description, in: query, schema: { type: string } }
+      responses:
+        '200': { description: 'Connected', content: { application/json: { schema: { $ref: '#/components/schemas/Message' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /api/v1/audiocom/disconnect:
+    post:
+      tags: [audio.com]
+      summary: 🔒 Forget the stored tokens
+      security: [{ ApiKey: [] }]
+      responses:
+        '200': { description: 'Disconnected', content: { application/json: { schema: { $ref: '#/components/schemas/Message' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/v1/audiocom/crawl:
+    post:
+      tags: [audio.com]
+      summary: 🔒 Crawl audio.com through the API
+      description: The `all` feed (newest first, incremental once complete) plus `#tag` feeds (re-walked every AUDIOCOM_TAG_REFRESH).
+      security: [{ ApiKey: [] }]
+      requestBody:
+        required: false
+        content: { application/json: { schema: { $ref: '#/components/schemas/AudioCrawlRequest' } } }
+      responses:
+        '202': { $ref: '#/components/responses/RunStarted' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Busy' }
+        '412': { description: 'Not connected; open /api/v1/audiocom/connect first', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  /api/v1/audiocom/search:
+    get:
+      tags: [audio.com]
+      summary: Live audio.com search (official API)
+      description: Same results as audio.com/search, ranked by relevance, 10 per page. `#tag` matches a tag exactly. Audio hits are stored. Responses are cached.
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string, example: bnxn } }
+        - { name: types, in: query, description: 'Comma-separated: audio, author, collection (default all).', schema: { type: string } }
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '200':
+          description: Results (the API does not report totals; hasMore while a page is full)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties: { data: { type: array, items: { $ref: '#/components/schemas/AudioSearchResult' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '412': { description: 'Not connected', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '502': { description: 'audio.com API error', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  /api/v1/audiocom/tracks:
+    get:
+      tags: [audio.com]
+      summary: Stored audio.com tracks
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - { name: q, in: query, description: 'Title, author or tag contains', schema: { type: string } }
+        - { name: tag, in: query, description: 'Exact tag (with or without ''#'')', schema: { type: string } }
+        - { name: category, in: query, schema: { type: string } }
+        - { name: username, in: query, schema: { type: string } }
+        - $ref: '#/components/parameters/HasAudio'
+        - { name: sort, in: query, schema: { type: string, enum: [recent, title, duration], default: recent } }
+      responses:
+        '200':
+          description: Tracks
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties: { data: { type: array, items: { $ref: '#/components/schemas/AudioTrack' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /api/v1/audiocom/tracks/{id}:
+    get:
+      tags: [audio.com]
+      summary: One stored audio.com track
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Track
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties: { data: { $ref: '#/components/schemas/AudioTrack' } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ======================= audio.com (website) =======================
+  /api/v1/audiocom/web/status:
+    get:
+      tags: [audio.com web]
+      summary: Website crawler state and block counter
+      description: '`data`: paused, pausedUntil, health (consecutiveBlocks, totalBlocks, trips, lastBlockReason/Url, …), feeds, lastRun, running, guard settings.'
+      responses:
+        '200': { $ref: '#/components/responses/Status' }
+  /api/v1/audiocom/web/crawl:
+    post:
+      tags: [audio.com web]
+      summary: 🔒 Crawl audio.com website pages (/genres → /genres/{name}?page=N)
+      security: [{ ApiKey: [] }]
+      requestBody:
+        required: false
+        content: { application/json: { schema: { $ref: '#/components/schemas/AudioWebCrawlRequest' } } }
+      responses:
+        '202': { $ref: '#/components/responses/RunStarted' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Busy' }
+        '503': { $ref: '#/components/responses/Paused' }
+  /api/v1/audiocom/web/reset:
+    post:
+      tags: [audio.com web]
+      summary: 🔒 Clear the block-counter pause
+      security: [{ ApiKey: [] }]
+      responses:
+        '200': { description: 'Reset', content: { application/json: { schema: { $ref: '#/components/schemas/Message' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/v1/audiocom/web/search:
+    get:
+      tags: [audio.com web]
+      summary: Search via audio.com/search?search_text=…&sort=relevance
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string } }
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '200':
+          description: Tracks found on the page
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties: { data: { type: array, items: { $ref: '#/components/schemas/AudioTrack' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { description: 'Disallowed by robots.txt', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '502': { description: 'Fetch failed', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '503': { $ref: '#/components/responses/Paused' }
+
+  # ======================= momuziki =======================
+  /api/v1/momuziki/status:
+    get:
+      tags: [momuziki]
+      summary: momuziki crawl progress and block counter
+      description: '`data`: cursor (phase categories|sweep|synced, categoryId, page), complete, songs, withAudio, detailsDue, categories, highestId, running, lastRun, defaults, guard {paused, pausedUntil, health}.'
+      responses:
+        '200': { $ref: '#/components/responses/Status' }
+  /api/v1/momuziki/crawl:
+    post:
+      tags: [momuziki]
+      summary: 🔒 Advance the momuziki crawl (resumable)
+      description: Categories (each to its last page) → probe ids no category listed (also above the highest id) → song pages that are due. Omitted fields use MOMUZIKI_* defaults.
+      security: [{ ApiKey: [] }]
+      requestBody:
+        required: false
+        content: { application/json: { schema: { $ref: '#/components/schemas/MomuzikiCrawlRequest' } } }
+      responses:
+        '202': { $ref: '#/components/responses/RunStarted' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Busy' }
+        '503': { $ref: '#/components/responses/Paused' }
+  /api/v1/momuziki/guard/reset:
+    post:
+      tags: [momuziki]
+      summary: 🔒 Clear the block-counter pause
+      security: [{ ApiKey: [] }]
+      responses:
+        '200': { description: 'Reset', content: { application/json: { schema: { $ref: '#/components/schemas/Message' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/v1/momuziki/search:
+    get:
+      tags: [momuziki]
+      summary: Search momuziki
+      description: |
+        `live` (default) runs momuziki's own search.php?query=…, stores the results and returns them in the site's order,
+        enriched with stored plays and covers. If the site is blocking (guard paused), it falls back to `local`
+        and sets `meta.fallback`. `local` searches the stored catalog (paged with page/limit).
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string, example: kenzo } }
+        - { name: source, in: query, schema: { type: string, enum: [live, local], default: live } }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Songs
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties: { data: { type: array, items: { $ref: '#/components/schemas/MomuzikiSong' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '502': { description: 'Fetch failed', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  /api/v1/momuziki/songs:
+    get:
+      tags: [momuziki]
+      summary: Stored momuziki songs
+      parameters: &momuzikiSongFilters
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - { name: q, in: query, description: 'Title or artist contains', schema: { type: string } }
+        - { name: categoryId, in: query, schema: { type: integer } }
+        - { name: artist, in: query, description: 'Exact artist (case-insensitive)', schema: { type: string } }
+        - $ref: '#/components/parameters/HasAudio'
+        - { name: sort, in: query, schema: { type: string, enum: [recent, title, plays], default: recent } }
+      responses:
+        '200': &momuzikiSongs
+          description: Songs
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties: { data: { type: array, items: { $ref: '#/components/schemas/MomuzikiSong' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /api/v1/momuziki/songs/{id}:
+    get:
+      tags: [momuziki]
+      summary: One stored momuziki song
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          description: Song
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties: { data: { $ref: '#/components/schemas/MomuzikiSong' } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/momuziki/categories:
+    get:
+      tags: [momuziki]
+      summary: momuziki categories with stored song counts
+      responses:
+        '200':
+          description: '`meta.uncategorized` = songs found only by the id sweep.'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/MomuzikiCategory' } }
+                      meta: { type: object, properties: { uncategorized: { type: integer } } }
+  /api/v1/momuziki/categories/{id}/songs:
+    get:
+      tags: [momuziki]
+      summary: Songs of a momuziki category
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, example: 8 } }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - { name: q, in: query, schema: { type: string } }
+        - { name: artist, in: query, schema: { type: string } }
+        - $ref: '#/components/parameters/HasAudio'
+        - { name: sort, in: query, schema: { type: string, enum: [recent, title, plays], default: recent } }
+      responses:
+        '200': *momuzikiSongs
+        '400': { $ref: '#/components/responses/BadRequest' }

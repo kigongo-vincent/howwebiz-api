@@ -1,0 +1,345 @@
+
+<!DOCTYPE html>
+<html lang="en">
+
+<!-- This is the head section add favicon link under it -->
+<head>
+ <link rel="icon" type="image/jpg" href="music/images/favicon.jpg">   
+<meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mo Muziki UG</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-8991626918806476"
+     crossorigin="anonymous"></script>
+
+      <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-W4QHJGFFDJ"></script>
+    <script>
+          window.dataLayer = window.dataLayer || [];
+          function gtag(){dataLayer.push(arguments);}
+          gtag('js', new Date());
+
+          gtag('config', 'G-W4QHJGFFDJ');
+    </script>
+    
+    <script>
+        // Check for saved theme preference, default to light mode
+        const theme = localStorage.getItem('theme') || 'light';
+        if (theme === 'dark') {
+            document.documentElement.classList.remove('light-mode');
+        } else {
+            document.documentElement.classList.add('light-mode');
+        }
+    </script>
+    <style>
+        :root {
+            --bg-primary: #121212;
+            --bg-secondary: #2d2d2d;
+            --text-primary: #ffffff;
+            --text-secondary: #a0a0a0;
+            --border-color: #404040;
+            --nav-bg: #000000;
+        }
+
+        :root.light-mode {
+            --bg-primary: #ffffff;
+            --bg-secondary: #f0f0f0;
+            --text-primary: #000000;
+            --text-secondary: #666666;
+            --border-color: #e0e0e0;
+            --nav-bg: #1a1a2e; /* Deep navy blue that complements red */
+        }
+
+        body {
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+
+        .light-mode .bg-black,
+        .light-mode .bg-gray-900 {
+            background-color: var(--bg-secondary);
+        }
+
+        .light-mode .border-gray-700 {
+            border-color: var(--border-color);
+        }
+
+        .light-mode .text-gray-300,
+        .light-mode .text-gray-400 {
+            color: var(--text-secondary);
+        }
+
+        .search-bar {
+            background-color: transparent;
+            border-radius: 20px;
+        }
+
+        .music-card {
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        .music-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 15px rgba(0, 0, 0, 0.3);
+        }
+        .section-title {
+            font-weight: 700;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .pagination-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: #5a5a5a;
+            display: inline-block;
+            margin: 0 2px;
+        }
+        .pagination-dot.active {
+            background-color: #ffffff;
+        }
+        .navbar-item {
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 1.1rem; /* Larger text */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* Update mobile menu styles */
+        #mobileSideMenu nav a {
+            font-size: 1.2rem;
+            text-align: center;
+            padding: 12px 0;
+        }
+
+        /* Light mode specific styles */
+        .light-mode header .navbar-item,
+        .light-mode #mobileSideMenu nav a {
+            color: #000000 !important;
+        }
+
+        .light-mode header .navbar-item:hover,
+        .light-mode #mobileSideMenu nav a:hover {
+            color: #ef4444 !important;
+            background-color: #f0f0f0;
+        }
+
+        /* Override the previous white text setting */
+        .light-mode header .text-current {
+            color: #000000 !important;
+        }
+
+        /* Keep search elements white in light mode */
+        .light-mode header .search-bar input,
+        .light-mode header .search-bar input::placeholder,
+        .light-mode header .search-bar button {
+            color: #ffffff !important;
+        }
+
+        /* Update mobile menu background in light mode */
+        .light-mode #mobileSideMenu {
+            background-color: var(--bg-primary);
+            border-left: 1px solid var(--border-color);
+        }
+
+        /* Add new floating theme toggle styles */
+        .theme-toggle-float {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 50%;
+            width: 45px;
+            height: 45px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            z-index: 1000;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .theme-toggle-float:hover {
+            transform: scale(1.1);
+            background: var(--bg-primary);
+        }
+
+        /* Update header background in both modes */
+        header.bg-black {
+            background-color: var(--nav-bg);
+        }
+
+        /* Add a subtle gradient to light mode nav */
+        .light-mode header.bg-black {
+            background: linear-gradient(to right, var(--nav-bg), #252547);
+        }
+
+        /* Ensure text is visible in light mode nav */
+        .light-mode header .text-white {
+            color: #ffffff !important;
+        }important;
+
+        /* Force white text in light mode for nav items */
+        .light-mode header .text-current,
+        .light-mode header .navbar-item,
+        .light-mode header .search-bar input,
+        .light-mode header .search-bar input::placeholder,
+        .light-mode header .search-bar button,
+        .light-mode header #hamburger {
+            color: #ffffff !important;
+        }
+
+        /* Keep search bar text white in mobile view */
+        .light-mode .search-bar input,
+        .light-mode .search-bar input::placeholder,
+        .light-mode .search-bar button {
+            color: #ffffff !important;
+        }
+
+        /* Keep hamburger icon white in light mode */
+        .light-mode #hamburger .fas {
+            color: #ffffff !important;
+        }
+
+        /* Update hover states for better visibility in light mode */
+        .light-mode header .navbar-item:hover,
+        .light-mode header .search-bar button:hover,
+        .light-mode header #hamburger:hover {
+            color: #ef4444 !important; /* red-500 */
+        }
+
+        /* Lighten the search bar border in light mode */
+        .light-mode .search-bar {
+            border-color: rgba(255, 255, 255, 0.4);
+        }
+
+        /* Only the site title should maintain its dark color in light mode */
+        .light-mode header .text-white.light-mode\:text-black {
+            color: #ffffff !important;
+        }
+    </style>
+</head>
+<body>
+    <!-- Add floating theme toggle button -->
+    <button id="themeToggle" class="theme-toggle-float text-current hover:text-red-500">
+        <i class="fas fa-sun"></i>
+    </button>
+
+    <!-- Navigation Bar -->
+    <header class="border-b border-gray-700 bg-black sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-8 py-3">
+            <!-- Desktop View -->
+            <div class="hidden md:flex items-center justify-between">
+                <div class="flex items-center">
+                    <a href="index.php" class="text-xl font-bold text-red-500 mr-6">
+                        <span class="text-white dark:text-white light-mode:text-black">Mo Muziki</span> UG
+                    </a>
+                    <nav class="flex space-x-1">
+                        <a href="index.php" class="navbar-item text-white hover:text-red-500">Home</a>
+                        <a href="songs.php" class="navbar-item text-white hover:text-red-500">Songs</a>
+                        <a href="categories.php" class="navbar-item text-white hover:text-red-500">Genre</a>
+                        <a href="artists.php" class="navbar-item text-white hover:text-red-500">Artists</a>
+                        <a href="a_z.php" class="navbar-item text-white hover:text-red-500">A-Z</a>
+                    </nav>
+                </div>
+                <div class="flex items-center">
+                    <form action="search.php" method="GET" class="search-bar flex items-center px-3 py-1 rounded-md border-[1px] border-gray-400">
+                        <input type="text" name="query" placeholder="Search music..." 
+                               class="bg-transparent text-current placeholder-current outline-none w-full">
+                        <button type="submit" class="text-current hover:text-red-500 ml-2">
+                            <i class="fas fa-search"></i>
+                        </button>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Mobile View -->
+            <div class="md:hidden">
+                <div class="flex items-center justify-between">
+                    <a href="index.php" class="text-xl font-bold text-red-500">
+                        <span class="text-white dark:text-white light-mode:text-black">Mo Muziki</span> UG
+                    </a>
+                    <button id="hamburger" class="text-current hover:text-red-500">
+                        <i class="fas fa-bars text-2xl"></i>
+                    </button>
+                </div>
+                <!-- Mobile Menu Overlay -->
+                <div id="mobileMenuOverlay" class="fixed inset-0 bg-black bg-opacity-50 z-40 hidden"></div>
+                <!-- Mobile Side Menu -->
+                <div id="mobileSideMenu" class="fixed top-0 right-0 w-64 h-full bg-gray-900 transform translate-x-full transition-transform duration-300 ease-in-out z-50">
+                    <div class="p-4">
+                        <button id="closeMenu" class="text-current hover:text-red-500 mb-4">
+                            <i class="fas fa-times text-2xl"></i>
+                        </button>
+                        <nav class="flex flex-col space-y-4">
+                            <a href="index.php" class="text-current hover:text-red-500">Home</a>
+                            <a href="songs.php" class="text-current hover:text-red-500">Songs</a>
+                            <a href="categories.php" class="text-current hover:text-red-500">Genre</a>
+                            <a href="artists.php" class="text-current hover:text-red-500">Artists</a>
+                            <a href="a_z.php" class="text-current hover:text-red-500">A-Z</a>
+                        </nav>
+                    </div>
+                </div>
+                <!-- Mobile View Search Bar -->
+                <div class="mt-2">
+                    <form action="search.php" method="GET" class="search-bar flex items-center px-3 py-1 rounded-md border-[1px] border-gray-400">
+                        <input type="text" name="query" placeholder="Search music..." 
+                               class="bg-transparent text-current placeholder-current outline-none flex-grow">
+                        <button type="submit" class="text-current hover:text-red-500 ml-2">
+                            <i class="fas fa-search"></i>
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </header>
+    <script>
+        // Mobile menu functionality
+        const hamburger = document.getElementById('hamburger');
+        const mobileMenu = document.getElementById('mobileSideMenu');
+        const overlay = document.getElementById('mobileMenuOverlay');
+        const closeBtn = document.getElementById('closeMenu');
+
+        function toggleMenu() {
+            mobileMenu.classList.toggle('translate-x-full');
+            overlay.classList.toggle('hidden');
+            document.body.classList.toggle('overflow-hidden');
+        }
+
+        hamburger.addEventListener('click', toggleMenu);
+        closeBtn.addEventListener('click', toggleMenu);
+        overlay.addEventListener('click', toggleMenu);
+
+        // Handle escape key
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && !mobileMenu.classList.contains('translate-x-full')) {
+                toggleMenu();
+            }
+        });
+    </script>
+
+    <script>
+        const themeToggle = document.getElementById('themeToggle');
+        const icon = themeToggle.querySelector('i');
+
+        function updateThemeIcon(isLight) {
+            icon.className = isLight ? 'fas fa-moon' : 'fas fa-sun';
+        }
+
+        // Set initial icon
+        updateThemeIcon(document.documentElement.classList.contains('light-mode'));
+
+        themeToggle.addEventListener('click', () => {
+            const isLight = document.documentElement.classList.toggle('light-mode');
+            localStorage.setItem('theme', isLight ? 'light' : 'dark');
+            updateThemeIcon(isLight);
+        });
+    </script>
+    <main class="max-w-7xl mx-auto px-8">
+    

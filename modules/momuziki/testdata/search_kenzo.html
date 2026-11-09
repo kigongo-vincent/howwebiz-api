@@ -1,0 +1,1586 @@
+
+<!DOCTYPE html>
+<html lang="en">
+
+<!-- This is the head section add favicon link under it -->
+<head>
+ <link rel="icon" type="image/jpg" href="music/images/favicon.jpg">   
+<meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mo Muziki UG</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-8991626918806476"
+     crossorigin="anonymous"></script>
+
+      <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-W4QHJGFFDJ"></script>
+    <script>
+          window.dataLayer = window.dataLayer || [];
+          function gtag(){dataLayer.push(arguments);}
+          gtag('js', new Date());
+
+          gtag('config', 'G-W4QHJGFFDJ');
+    </script>
+    
+    <script>
+        // Check for saved theme preference, default to light mode
+        const theme = localStorage.getItem('theme') || 'light';
+        if (theme === 'dark') {
+            document.documentElement.classList.remove('light-mode');
+        } else {
+            document.documentElement.classList.add('light-mode');
+        }
+    </script>
+    <style>
+        :root {
+            --bg-primary: #121212;
+            --bg-secondary: #2d2d2d;
+            --text-primary: #ffffff;
+            --text-secondary: #a0a0a0;
+            --border-color: #404040;
+            --nav-bg: #000000;
+        }
+
+        :root.light-mode {
+            --bg-primary: #ffffff;
+            --bg-secondary: #f0f0f0;
+            --text-primary: #000000;
+            --text-secondary: #666666;
+            --border-color: #e0e0e0;
+            --nav-bg: #1a1a2e; /* Deep navy blue that complements red */
+        }
+
+        body {
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+
+        .light-mode .bg-black,
+        .light-mode .bg-gray-900 {
+            background-color: var(--bg-secondary);
+        }
+
+        .light-mode .border-gray-700 {
+            border-color: var(--border-color);
+        }
+
+        .light-mode .text-gray-300,
+        .light-mode .text-gray-400 {
+            color: var(--text-secondary);
+        }
+
+        .search-bar {
+            background-color: transparent;
+            border-radius: 20px;
+        }
+
+        .music-card {
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        .music-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 15px rgba(0, 0, 0, 0.3);
+        }
+        .section-title {
+            font-weight: 700;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .pagination-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: #5a5a5a;
+            display: inline-block;
+            margin: 0 2px;
+        }
+        .pagination-dot.active {
+            background-color: #ffffff;
+        }
+        .navbar-item {
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 1.1rem; /* Larger text */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* Update mobile menu styles */
+        #mobileSideMenu nav a {
+            font-size: 1.2rem;
+            text-align: center;
+            padding: 12px 0;
+        }
+
+        /* Light mode specific styles */
+        .light-mode header .navbar-item,
+        .light-mode #mobileSideMenu nav a {
+            color: #000000 !important;
+        }
+
+        .light-mode header .navbar-item:hover,
+        .light-mode #mobileSideMenu nav a:hover {
+            color: #ef4444 !important;
+            background-color: #f0f0f0;
+        }
+
+        /* Override the previous white text setting */
+        .light-mode header .text-current {
+            color: #000000 !important;
+        }
+
+        /* Keep search elements white in light mode */
+        .light-mode header .search-bar input,
+        .light-mode header .search-bar input::placeholder,
+        .light-mode header .search-bar button {
+            color: #ffffff !important;
+        }
+
+        /* Update mobile menu background in light mode */
+        .light-mode #mobileSideMenu {
+            background-color: var(--bg-primary);
+            border-left: 1px solid var(--border-color);
+        }
+
+        /* Add new floating theme toggle styles */
+        .theme-toggle-float {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 50%;
+            width: 45px;
+            height: 45px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            z-index: 1000;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .theme-toggle-float:hover {
+            transform: scale(1.1);
+            background: var(--bg-primary);
+        }
+
+        /* Update header background in both modes */
+        header.bg-black {
+            background-color: var(--nav-bg);
+        }
+
+        /* Add a subtle gradient to light mode nav */
+        .light-mode header.bg-black {
+            background: linear-gradient(to right, var(--nav-bg), #252547);
+        }
+
+        /* Ensure text is visible in light mode nav */
+        .light-mode header .text-white {
+            color: #ffffff !important;
+        }important;
+
+        /* Force white text in light mode for nav items */
+        .light-mode header .text-current,
+        .light-mode header .navbar-item,
+        .light-mode header .search-bar input,
+        .light-mode header .search-bar input::placeholder,
+        .light-mode header .search-bar button,
+        .light-mode header #hamburger {
+            color: #ffffff !important;
+        }
+
+        /* Keep search bar text white in mobile view */
+        .light-mode .search-bar input,
+        .light-mode .search-bar input::placeholder,
+        .light-mode .search-bar button {
+            color: #ffffff !important;
+        }
+
+        /* Keep hamburger icon white in light mode */
+        .light-mode #hamburger .fas {
+            color: #ffffff !important;
+        }
+
+        /* Update hover states for better visibility in light mode */
+        .light-mode header .navbar-item:hover,
+        .light-mode header .search-bar button:hover,
+        .light-mode header #hamburger:hover {
+            color: #ef4444 !important; /* red-500 */
+        }
+
+        /* Lighten the search bar border in light mode */
+        .light-mode .search-bar {
+            border-color: rgba(255, 255, 255, 0.4);
+        }
+
+        /* Only the site title should maintain its dark color in light mode */
+        .light-mode header .text-white.light-mode\:text-black {
+            color: #ffffff !important;
+        }
+    </style>
+</head>
+<body>
+    <!-- Add floating theme toggle button -->
+    <button id="themeToggle" class="theme-toggle-float text-current hover:text-red-500">
+        <i class="fas fa-sun"></i>
+    </button>
+
+    <!-- Navigation Bar -->
+    <header class="border-b border-gray-700 bg-black sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-8 py-3">
+            <!-- Desktop View -->
+            <div class="hidden md:flex items-center justify-between">
+                <div class="flex items-center">
+                    <a href="index.php" class="text-xl font-bold text-red-500 mr-6">
+                        <span class="text-white dark:text-white light-mode:text-black">Mo Muziki</span> UG
+                    </a>
+                    <nav class="flex space-x-1">
+                        <a href="index.php" class="navbar-item text-white hover:text-red-500">Home</a>
+                        <a href="songs.php" class="navbar-item text-white hover:text-red-500">Songs</a>
+                        <a href="categories.php" class="navbar-item text-white hover:text-red-500">Genre</a>
+                        <a href="artists.php" class="navbar-item text-white hover:text-red-500">Artists</a>
+                        <a href="a_z.php" class="navbar-item text-white hover:text-red-500">A-Z</a>
+                    </nav>
+                </div>
+                <div class="flex items-center">
+                    <form action="search.php" method="GET" class="search-bar flex items-center px-3 py-1 rounded-md border-[1px] border-gray-400">
+                        <input type="text" name="query" placeholder="Search music..." 
+                               class="bg-transparent text-current placeholder-current outline-none w-full">
+                        <button type="submit" class="text-current hover:text-red-500 ml-2">
+                            <i class="fas fa-search"></i>
+                        </button>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Mobile View -->
+            <div class="md:hidden">
+                <div class="flex items-center justify-between">
+                    <a href="index.php" class="text-xl font-bold text-red-500">
+                        <span class="text-white dark:text-white light-mode:text-black">Mo Muziki</span> UG
+                    </a>
+                    <button id="hamburger" class="text-current hover:text-red-500">
+                        <i class="fas fa-bars text-2xl"></i>
+                    </button>
+                </div>
+                <!-- Mobile Menu Overlay -->
+                <div id="mobileMenuOverlay" class="fixed inset-0 bg-black bg-opacity-50 z-40 hidden"></div>
+                <!-- Mobile Side Menu -->
+                <div id="mobileSideMenu" class="fixed top-0 right-0 w-64 h-full bg-gray-900 transform translate-x-full transition-transform duration-300 ease-in-out z-50">
+                    <div class="p-4">
+                        <button id="closeMenu" class="text-current hover:text-red-500 mb-4">
+                            <i class="fas fa-times text-2xl"></i>
+                        </button>
+                        <nav class="flex flex-col space-y-4">
+                            <a href="index.php" class="text-current hover:text-red-500">Home</a>
+                            <a href="songs.php" class="text-current hover:text-red-500">Songs</a>
+                            <a href="categories.php" class="text-current hover:text-red-500">Genre</a>
+                            <a href="artists.php" class="text-current hover:text-red-500">Artists</a>
+                            <a href="a_z.php" class="text-current hover:text-red-500">A-Z</a>
+                        </nav>
+                    </div>
+                </div>
+                <!-- Mobile View Search Bar -->
+                <div class="mt-2">
+                    <form action="search.php" method="GET" class="search-bar flex items-center px-3 py-1 rounded-md border-[1px] border-gray-400">
+                        <input type="text" name="query" placeholder="Search music..." 
+                               class="bg-transparent text-current placeholder-current outline-none flex-grow">
+                        <button type="submit" class="text-current hover:text-red-500 ml-2">
+                            <i class="fas fa-search"></i>
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </header>
+    <script>
+        // Mobile menu functionality
+        const hamburger = document.getElementById('hamburger');
+        const mobileMenu = document.getElementById('mobileSideMenu');
+        const overlay = document.getElementById('mobileMenuOverlay');
+        const closeBtn = document.getElementById('closeMenu');
+
+        function toggleMenu() {
+            mobileMenu.classList.toggle('translate-x-full');
+            overlay.classList.toggle('hidden');
+            document.body.classList.toggle('overflow-hidden');
+        }
+
+        hamburger.addEventListener('click', toggleMenu);
+        closeBtn.addEventListener('click', toggleMenu);
+        overlay.addEventListener('click', toggleMenu);
+
+        // Handle escape key
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && !mobileMenu.classList.contains('translate-x-full')) {
+                toggleMenu();
+            }
+        });
+    </script>
+
+    <script>
+        const themeToggle = document.getElementById('themeToggle');
+        const icon = themeToggle.querySelector('i');
+
+        function updateThemeIcon(isLight) {
+            icon.className = isLight ? 'fas fa-moon' : 'fas fa-sun';
+        }
+
+        // Set initial icon
+        updateThemeIcon(document.documentElement.classList.contains('light-mode'));
+
+        themeToggle.addEventListener('click', () => {
+            const isLight = document.documentElement.classList.toggle('light-mode');
+            localStorage.setItem('theme', isLight ? 'light' : 'dark');
+            updateThemeIcon(isLight);
+        });
+    </script>
+    <main class="max-w-7xl mx-auto px-8">
+    <section class="mb-10">
+        <div class="section-title mb-4">
+            <h2 class="text-xl">Search <span class="text-red-500">: kenzo</span></h2>
+        </div>
+        <form action="" method="GET" class="mb-4" onsubmit="return validateSearch()">
+            <div class="relative flex items-center">
+            <input type="text" name="query" placeholder="Search..." id="searchInput"
+            class="bg-transparent border border-gray-600 rounded-md p-2 w-full pr-20 text-current placeholder-gray-400 focus:outline-none focus:border-blue-500">
+            <button type="button" id="clearButton" class="hidden absolute right-12 text-gray-400 hover:text-gray-300" onclick="clearSearch()">
+            <svg class="w-5 h-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+            </button>
+            <button type="submit" class="absolute right-2 p-2 text-gray-400 hover:text-blue-500 transition-colors duration-200">
+            <svg class="w-5 h-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            </button>
+            </div>
+        </form>
+        <script>
+            const searchInput = document.getElementById('searchInput');
+            const clearButton = document.getElementById('clearButton');
+            
+            searchInput.addEventListener('input', function() {
+            clearButton.style.display = this.value ? 'block' : 'none';
+            });
+            
+            function clearSearch() {
+            searchInput.value = '';
+            clearButton.style.display = 'none';
+            }
+
+            function validateSearch() {
+            return searchInput.value.trim() !== '';
+            }
+        </script>
+        <div class="space-y-4">                    <div class="flex items-center justify-between p-4 rounded-lg">
+                        <div class="flex items-center space-x-4">
+                            <img 
+                                src="music/images/thumbs/1755808991_18254_mp3_thumb.jpg" 
+                                alt="Nkulowoozako" 
+                                class="w-16 h-16 rounded-sm object-cover">
+                            <div>
+                                <a href="song.php?id=3802" class="hover:text-red-500 transition-colors">
+                                    <h3 class="text-lg font-semibold">Nkulowoozako</h3>
+                                </a>
+                                <p class="text-gray-400">Eddy Kenzo</p>
+                            </div>
+                        </div>
+                        <div class="flex space-x-4">
+                            <a href="https://momuziki.com/music/uploads/Nkulowozaako   Eddy Kenzo.mp3" download class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-download"></i>
+                                <span class="hidden md:inline">Download</span>
+                            </a>
+                            <a href="song.php?id=3802" class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-play"></i>
+                                <span class="hidden md:inline">Play</span>
+                            </a>
+                        </div>
+                    </div>
+                                        <div class="flex items-center justify-between p-4 rounded-lg">
+                        <div class="flex items-center space-x-4">
+                            <img 
+                                src="music/images/thumbs/1755809166_14745_mp3_thumb.jpg" 
+                                alt="My Juice" 
+                                class="w-16 h-16 rounded-sm object-cover">
+                            <div>
+                                <a href="song.php?id=3803" class="hover:text-red-500 transition-colors">
+                                    <h3 class="text-lg font-semibold">My Juice</h3>
+                                </a>
+                                <p class="text-gray-400">Eddy Kenzo</p>
+                            </div>
+                        </div>
+                        <div class="flex space-x-4">
+                            <a href="https://momuziki.com/music/uploads/My Juice - Oma Afrikana and Eddy Kenzo.mp3" download class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-download"></i>
+                                <span class="hidden md:inline">Download</span>
+                            </a>
+                            <a href="song.php?id=3803" class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-play"></i>
+                                <span class="hidden md:inline">Play</span>
+                            </a>
+                        </div>
+                    </div>
+                                        <div class="flex items-center justify-between p-4 rounded-lg">
+                        <div class="flex items-center space-x-4">
+                            <img 
+                                src="music/images/thumbs/1756312393_74514_mp3_thumb.jpg" 
+                                alt="Tweyagale" 
+                                class="w-16 h-16 rounded-sm object-cover">
+                            <div>
+                                <a href="song.php?id=4028" class="hover:text-red-500 transition-colors">
+                                    <h3 class="text-lg font-semibold">Tweyagale</h3>
+                                </a>
+                                <p class="text-gray-400">Eddy Kenzo</p>
+                            </div>
+                        </div>
+                        <div class="flex space-x-4">
+                            <a href="https://momuziki.com/music/uploads/!  Tweyagale_-_Eddy_Kenzo[Official_Video](480p).mp3" download class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-download"></i>
+                                <span class="hidden md:inline">Download</span>
+                            </a>
+                            <a href="song.php?id=4028" class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-play"></i>
+                                <span class="hidden md:inline">Play</span>
+                            </a>
+                        </div>
+                    </div>
+                                        <div class="flex items-center justify-between p-4 rounded-lg">
+                        <div class="flex items-center space-x-4">
+                            <img 
+                                src="music/images/thumbs/1756312448_65600_mp3_thumb.jpg" 
+                                alt="Balipila Boda" 
+                                class="w-16 h-16 rounded-sm object-cover">
+                            <div>
+                                <a href="song.php?id=4029" class="hover:text-red-500 transition-colors">
+                                    <h3 class="text-lg font-semibold">Balipila Boda</h3>
+                                </a>
+                                <p class="text-gray-400">Eddy Kenzo</p>
+                            </div>
+                        </div>
+                        <div class="flex space-x-4">
+                            <a href="https://momuziki.com/music/uploads/!!0Balippila Boda  Eddy KenzoOfficial Audio Promo_360p.mp3" download class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-download"></i>
+                                <span class="hidden md:inline">Download</span>
+                            </a>
+                            <a href="song.php?id=4029" class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-play"></i>
+                                <span class="hidden md:inline">Play</span>
+                            </a>
+                        </div>
+                    </div>
+                                        <div class="flex items-center justify-between p-4 rounded-lg">
+                        <div class="flex items-center space-x-4">
+                            <img 
+                                src="music/images/thumbs/1756312500_42668_mp3_thumb.jpg" 
+                                alt="Abatusabira" 
+                                class="w-16 h-16 rounded-sm object-cover">
+                            <div>
+                                <a href="song.php?id=4030" class="hover:text-red-500 transition-colors">
+                                    <h3 class="text-lg font-semibold">Abatusabira</h3>
+                                </a>
+                                <p class="text-gray-400">Eddy Kenzo</p>
+                            </div>
+                        </div>
+                        <div class="flex space-x-4">
+                            <a href="https://momuziki.com/music/uploads/Abatusabira - Eddy Kenzo.mp3" download class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-download"></i>
+                                <span class="hidden md:inline">Download</span>
+                            </a>
+                            <a href="song.php?id=4030" class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-play"></i>
+                                <span class="hidden md:inline">Play</span>
+                            </a>
+                        </div>
+                    </div>
+                                        <div class="flex items-center justify-between p-4 rounded-lg">
+                        <div class="flex items-center space-x-4">
+                            <img 
+                                src="music/images/thumbs/1756312536_72685_mp3_thumb.jpg" 
+                                alt="Bender" 
+                                class="w-16 h-16 rounded-sm object-cover">
+                            <div>
+                                <a href="song.php?id=4031" class="hover:text-red-500 transition-colors">
+                                    <h3 class="text-lg font-semibold">Bender</h3>
+                                </a>
+                                <p class="text-gray-400">Eddy Kenzo</p>
+                            </div>
+                        </div>
+                        <div class="flex space-x-4">
+                            <a href="https://momuziki.com/music/uploads/Bender--Eddy Kenzo_[MSS].mp3" download class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-download"></i>
+                                <span class="hidden md:inline">Download</span>
+                            </a>
+                            <a href="song.php?id=4031" class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-play"></i>
+                                <span class="hidden md:inline">Play</span>
+                            </a>
+                        </div>
+                    </div>
+                                        <div class="flex items-center justify-between p-4 rounded-lg">
+                        <div class="flex items-center space-x-4">
+                            <img 
+                                src="music/images/thumbs/1756312575_76848_mp3_thumb.jpg" 
+                                alt="Bibaawo" 
+                                class="w-16 h-16 rounded-sm object-cover">
+                            <div>
+                                <a href="song.php?id=4032" class="hover:text-red-500 transition-colors">
+                                    <h3 class="text-lg font-semibold">Bibaawo</h3>
+                                </a>
+                                <p class="text-gray-400">Eddy Kenzo</p>
+                            </div>
+                        </div>
+                        <div class="flex space-x-4">
+                            <a href="https://momuziki.com/music/uploads/Bibaawo - Eddy Kenzo.mp3" download class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-download"></i>
+                                <span class="hidden md:inline">Download</span>
+                            </a>
+                            <a href="song.php?id=4032" class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-play"></i>
+                                <span class="hidden md:inline">Play</span>
+                            </a>
+                        </div>
+                    </div>
+                                        <div class="flex items-center justify-between p-4 rounded-lg">
+                        <div class="flex items-center space-x-4">
+                            <img 
+                                src="music/images/thumbs/1756312652_51823_mp3_thumb.jpg" 
+                                alt="Bikyuuka" 
+                                class="w-16 h-16 rounded-sm object-cover">
+                            <div>
+                                <a href="song.php?id=4033" class="hover:text-red-500 transition-colors">
+                                    <h3 class="text-lg font-semibold">Bikyuuka</h3>
+                                </a>
+                                <p class="text-gray-400">Eddy Kenzo</p>
+                            </div>
+                        </div>
+                        <div class="flex space-x-4">
+                            <a href="https://momuziki.com/music/uploads/Bikyuuka - Eddy Kenzo [Official HD.mp3" download class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-download"></i>
+                                <span class="hidden md:inline">Download</span>
+                            </a>
+                            <a href="song.php?id=4033" class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-play"></i>
+                                <span class="hidden md:inline">Play</span>
+                            </a>
+                        </div>
+                    </div>
+                                        <div class="flex items-center justify-between p-4 rounded-lg">
+                        <div class="flex items-center space-x-4">
+                            <img 
+                                src="music/images/thumbs/1756312704_41052_mp3_thumb.jpg" 
+                                alt="Nsimbudde" 
+                                class="w-16 h-16 rounded-sm object-cover">
+                            <div>
+                                <a href="song.php?id=4034" class="hover:text-red-500 transition-colors">
+                                    <h3 class="text-lg font-semibold">Nsimbudde</h3>
+                                </a>
+                                <p class="text-gray-400">Eddy Kenzo</p>
+                            </div>
+                        </div>
+                        <div class="flex space-x-4">
+                            <a href="https://momuziki.com/music/uploads/Eddy Kenzo - Nsimbudde  - (Single-Clean) (DJ ROZUIE Z5) 100 BPM.mp3" download class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-download"></i>
+                                <span class="hidden md:inline">Download</span>
+                            </a>
+                            <a href="song.php?id=4034" class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-play"></i>
+                                <span class="hidden md:inline">Play</span>
+                            </a>
+                        </div>
+                    </div>
+                                        <div class="flex items-center justify-between p-4 rounded-lg">
+                        <div class="flex items-center space-x-4">
+                            <img 
+                                src="music/images/thumbs/1756318122_36467_mp3_thumb.jpg" 
+                                alt="Kiseera" 
+                                class="w-16 h-16 rounded-sm object-cover">
+                            <div>
+                                <a href="song.php?id=4035" class="hover:text-red-500 transition-colors">
+                                    <h3 class="text-lg font-semibold">Kiseera</h3>
+                                </a>
+                                <p class="text-gray-400">Eddy Kenzo</p>
+                            </div>
+                        </div>
+                        <div class="flex space-x-4">
+                            <a href="https://momuziki.com/music/uploads/Eddy Kenzo - Kiseera.mp3" download class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-download"></i>
+                                <span class="hidden md:inline">Download</span>
+                            </a>
+                            <a href="song.php?id=4035" class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-play"></i>
+                                <span class="hidden md:inline">Play</span>
+                            </a>
+                        </div>
+                    </div>
+                                        <div class="flex items-center justify-between p-4 rounded-lg">
+                        <div class="flex items-center space-x-4">
+                            <img 
+                                src="music/images/thumbs/1756318194_86851_mp3_thumb.jpg" 
+                                alt="Semyekozo" 
+                                class="w-16 h-16 rounded-sm object-cover">
+                            <div>
+                                <a href="song.php?id=4036" class="hover:text-red-500 transition-colors">
+                                    <h3 class="text-lg font-semibold">Semyekozo</h3>
+                                </a>
+                                <p class="text-gray-400">Eddy Kenzo</p>
+                            </div>
+                        </div>
+                        <div class="flex space-x-4">
+                            <a href="https://momuziki.com/music/uploads/Eddy Kenzo - Semyekozo.mp3" download class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-download"></i>
+                                <span class="hidden md:inline">Download</span>
+                            </a>
+                            <a href="song.php?id=4036" class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-play"></i>
+                                <span class="hidden md:inline">Play</span>
+                            </a>
+                        </div>
+                    </div>
+                                        <div class="flex items-center justify-between p-4 rounded-lg">
+                        <div class="flex items-center space-x-4">
+                            <img 
+                                src="music/images/thumbs/1756318467_70983_mp3_thumb.jpg" 
+                                alt="Kenzo Nonstop" 
+                                class="w-16 h-16 rounded-sm object-cover">
+                            <div>
+                                <a href="song.php?id=4037" class="hover:text-red-500 transition-colors">
+                                    <h3 class="text-lg font-semibold">Kenzo Nonstop</h3>
+                                </a>
+                                <p class="text-gray-400">Eddy Kenzo</p>
+                            </div>
+                        </div>
+                        <div class="flex space-x-4">
+                            <a href="https://momuziki.com/music/uploads/Eddy Kenzo's Nonstop(#BestOfKenzo)@DJEVIOPROMIX ..[KIM PROMOTER.mp3" download class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-download"></i>
+                                <span class="hidden md:inline">Download</span>
+                            </a>
+                            <a href="song.php?id=4037" class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-play"></i>
+                                <span class="hidden md:inline">Play</span>
+                            </a>
+                        </div>
+                    </div>
+                                        <div class="flex items-center justify-between p-4 rounded-lg">
+                        <div class="flex items-center space-x-4">
+                            <img 
+                                src="music/images/thumbs/1756318573_95449_mp3_thumb.jpg" 
+                                alt="Enjoyment" 
+                                class="w-16 h-16 rounded-sm object-cover">
+                            <div>
+                                <a href="song.php?id=4038" class="hover:text-red-500 transition-colors">
+                                    <h3 class="text-lg font-semibold">Enjoyment</h3>
+                                </a>
+                                <p class="text-gray-400">Eddy Kenzo</p>
+                            </div>
+                        </div>
+                        <div class="flex space-x-4">
+                            <a href="https://momuziki.com/music/uploads/Kamunguluze - Kenzo.mp3" download class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-download"></i>
+                                <span class="hidden md:inline">Download</span>
+                            </a>
+                            <a href="song.php?id=4038" class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-play"></i>
+                                <span class="hidden md:inline">Play</span>
+                            </a>
+                        </div>
+                    </div>
+                                        <div class="flex items-center justify-between p-4 rounded-lg">
+                        <div class="flex items-center space-x-4">
+                            <img 
+                                src="music/images/thumbs/1756318905_44090_mp3_thumb.jpg" 
+                                alt="Kamunguluze" 
+                                class="w-16 h-16 rounded-sm object-cover">
+                            <div>
+                                <a href="song.php?id=4039" class="hover:text-red-500 transition-colors">
+                                    <h3 class="text-lg font-semibold">Kamunguluze</h3>
+                                </a>
+                                <p class="text-gray-400">Eddy Kenzo</p>
+                            </div>
+                        </div>
+                        <div class="flex space-x-4">
+                            <a href="https://momuziki.com/music/uploads/Kamunguluze - Kenzo.mp3" download class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-download"></i>
+                                <span class="hidden md:inline">Download</span>
+                            </a>
+                            <a href="song.php?id=4039" class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-play"></i>
+                                <span class="hidden md:inline">Play</span>
+                            </a>
+                        </div>
+                    </div>
+                                        <div class="flex items-center justify-between p-4 rounded-lg">
+                        <div class="flex items-center space-x-4">
+                            <img 
+                                src="music/images/thumbs/1756318981_49008_mp3_thumb.jpg" 
+                                alt="Kapande" 
+                                class="w-16 h-16 rounded-sm object-cover">
+                            <div>
+                                <a href="song.php?id=4040" class="hover:text-red-500 transition-colors">
+                                    <h3 class="text-lg font-semibold">Kapande</h3>
+                                </a>
+                                <p class="text-gray-400">Eddy Kenzo</p>
+                            </div>
+                        </div>
+                        <div class="flex space-x-4">
+                            <a href="https://momuziki.com/music/uploads/Kapande =(RF) B2c x Eddy Kenzo.mp3" download class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-download"></i>
+                                <span class="hidden md:inline">Download</span>
+                            </a>
+                            <a href="song.php?id=4040" class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-play"></i>
+                                <span class="hidden md:inline">Play</span>
+                            </a>
+                        </div>
+                    </div>
+                                        <div class="flex items-center justify-between p-4 rounded-lg">
+                        <div class="flex items-center space-x-4">
+                            <img 
+                                src="music/images/thumbs/1756319034_28868_mp3_thumb.jpg" 
+                                alt="Kyomisinga" 
+                                class="w-16 h-16 rounded-sm object-cover">
+                            <div>
+                                <a href="song.php?id=4041" class="hover:text-red-500 transition-colors">
+                                    <h3 class="text-lg font-semibold">Kyomisinga</h3>
+                                </a>
+                                <p class="text-gray-400">Eddy Kenzo</p>
+                            </div>
+                        </div>
+                        <div class="flex space-x-4">
+                            <a href="https://momuziki.com/music/uploads/Kyomisinga-Eddy Kenzo [KINGTYGA PROM 0756517667].mp3" download class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-download"></i>
+                                <span class="hidden md:inline">Download</span>
+                            </a>
+                            <a href="song.php?id=4041" class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-play"></i>
+                                <span class="hidden md:inline">Play</span>
+                            </a>
+                        </div>
+                    </div>
+                                        <div class="flex items-center justify-between p-4 rounded-lg">
+                        <div class="flex items-center space-x-4">
+                            <img 
+                                src="music/images/thumbs/1756319139_11425_mp3_thumb.jpg" 
+                                alt="Leka Nzine" 
+                                class="w-16 h-16 rounded-sm object-cover">
+                            <div>
+                                <a href="song.php?id=4042" class="hover:text-red-500 transition-colors">
+                                    <h3 class="text-lg font-semibold">Leka Nzine</h3>
+                                </a>
+                                <p class="text-gray-400">Eddy Kenzo</p>
+                            </div>
+                        </div>
+                        <div class="flex space-x-4">
+                            <a href="https://momuziki.com/music/uploads/Leka Nzine  (sitya loss) -Eddy Kenzo.mp3" download class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-download"></i>
+                                <span class="hidden md:inline">Download</span>
+                            </a>
+                            <a href="song.php?id=4042" class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-play"></i>
+                                <span class="hidden md:inline">Play</span>
+                            </a>
+                        </div>
+                    </div>
+                                        <div class="flex items-center justify-between p-4 rounded-lg">
+                        <div class="flex items-center space-x-4">
+                            <img 
+                                src="music/images/thumbs/1756319251_6440_mp3_thumb.jpg" 
+                                alt="Mbilo Mbilo" 
+                                class="w-16 h-16 rounded-sm object-cover">
+                            <div>
+                                <a href="song.php?id=4043" class="hover:text-red-500 transition-colors">
+                                    <h3 class="text-lg font-semibold">Mbilo Mbilo</h3>
+                                </a>
+                                <p class="text-gray-400">Eddy Kenzo</p>
+                            </div>
+                        </div>
+                        <div class="flex space-x-4">
+                            <a href="https://momuziki.com/music/uploads/Mbilo Mbilo--Eddy Kenzo-[Mss]0756543316.mp3" download class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-download"></i>
+                                <span class="hidden md:inline">Download</span>
+                            </a>
+                            <a href="song.php?id=4043" class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-play"></i>
+                                <span class="hidden md:inline">Play</span>
+                            </a>
+                        </div>
+                    </div>
+                                        <div class="flex items-center justify-between p-4 rounded-lg">
+                        <div class="flex items-center space-x-4">
+                            <img 
+                                src="music/images/thumbs/1756319308_87698_mp3_thumb.jpg" 
+                                alt="Nkuwe" 
+                                class="w-16 h-16 rounded-sm object-cover">
+                            <div>
+                                <a href="song.php?id=4044" class="hover:text-red-500 transition-colors">
+                                    <h3 class="text-lg font-semibold">Nkuwe</h3>
+                                </a>
+                                <p class="text-gray-400">Eddy Kenzo</p>
+                            </div>
+                        </div>
+                        <div class="flex space-x-4">
+                            <a href="https://momuziki.com/music/uploads/Nkuwe_-_Kin_Bella_&_Eddy_Kenzo[Official_4K_Video](720p).mp3" download class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-download"></i>
+                                <span class="hidden md:inline">Download</span>
+                            </a>
+                            <a href="song.php?id=4044" class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-play"></i>
+                                <span class="hidden md:inline">Play</span>
+                            </a>
+                        </div>
+                    </div>
+                                        <div class="flex items-center justify-between p-4 rounded-lg">
+                        <div class="flex items-center space-x-4">
+                            <img 
+                                src="music/images/thumbs/1756319357_50410_mp3_thumb.jpg" 
+                                alt="Nze Mutuufu" 
+                                class="w-16 h-16 rounded-sm object-cover">
+                            <div>
+                                <a href="song.php?id=4045" class="hover:text-red-500 transition-colors">
+                                    <h3 class="text-lg font-semibold">Nze Mutuufu</h3>
+                                </a>
+                                <p class="text-gray-400">Eddy Kenzo</p>
+                            </div>
+                        </div>
+                        <div class="flex space-x-4">
+                            <a href="https://momuziki.com/music/uploads/Nze Mutuufu - Eddy Kenzo.mp3" download class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-download"></i>
+                                <span class="hidden md:inline">Download</span>
+                            </a>
+                            <a href="song.php?id=4045" class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-play"></i>
+                                <span class="hidden md:inline">Play</span>
+                            </a>
+                        </div>
+                    </div>
+                                        <div class="flex items-center justify-between p-4 rounded-lg">
+                        <div class="flex items-center space-x-4">
+                            <img 
+                                src="music/images/thumbs/1756319410_64092_mp3_thumb.jpg" 
+                                alt="Ogenda Kunzisa" 
+                                class="w-16 h-16 rounded-sm object-cover">
+                            <div>
+                                <a href="song.php?id=4046" class="hover:text-red-500 transition-colors">
+                                    <h3 class="text-lg font-semibold">Ogenda Kunzisa</h3>
+                                </a>
+                                <p class="text-gray-400">Eddy Kenzo</p>
+                            </div>
+                        </div>
+                        <div class="flex space-x-4">
+                            <a href="https://momuziki.com/music/uploads/Ogenda Kunzisa - Eddy Kenzo.mp3" download class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-download"></i>
+                                <span class="hidden md:inline">Download</span>
+                            </a>
+                            <a href="song.php?id=4046" class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-play"></i>
+                                <span class="hidden md:inline">Play</span>
+                            </a>
+                        </div>
+                    </div>
+                                        <div class="flex items-center justify-between p-4 rounded-lg">
+                        <div class="flex items-center space-x-4">
+                            <img 
+                                src="music/images/thumbs/1756319510_95239_mp3_thumb.jpg" 
+                                alt="Royal" 
+                                class="w-16 h-16 rounded-sm object-cover">
+                            <div>
+                                <a href="song.php?id=4047" class="hover:text-red-500 transition-colors">
+                                    <h3 class="text-lg font-semibold">Royal</h3>
+                                </a>
+                                <p class="text-gray-400">Eddy Kenzo</p>
+                            </div>
+                        </div>
+                        <div class="flex space-x-4">
+                            <a href="https://momuziki.com/music/uploads/Royal -  Eddy Kenzo & Patoranking.mp3" download class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-download"></i>
+                                <span class="hidden md:inline">Download</span>
+                            </a>
+                            <a href="song.php?id=4047" class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-play"></i>
+                                <span class="hidden md:inline">Play</span>
+                            </a>
+                        </div>
+                    </div>
+                                        <div class="flex items-center justify-between p-4 rounded-lg">
+                        <div class="flex items-center space-x-4">
+                            <img 
+                                src="music/images/thumbs/1756319575_33131_mp3_thumb.jpg" 
+                                alt="Sango" 
+                                class="w-16 h-16 rounded-sm object-cover">
+                            <div>
+                                <a href="song.php?id=4048" class="hover:text-red-500 transition-colors">
+                                    <h3 class="text-lg font-semibold">Sango</h3>
+                                </a>
+                                <p class="text-gray-400">Eddy Kenzo</p>
+                            </div>
+                        </div>
+                        <div class="flex space-x-4">
+                            <a href="https://momuziki.com/music/uploads/Sango - Eddy Kenzo & Martha Mukisa[Official Video].mp3" download class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-download"></i>
+                                <span class="hidden md:inline">Download</span>
+                            </a>
+                            <a href="song.php?id=4048" class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-play"></i>
+                                <span class="hidden md:inline">Play</span>
+                            </a>
+                        </div>
+                    </div>
+                                        <div class="flex items-center justify-between p-4 rounded-lg">
+                        <div class="flex items-center space-x-4">
+                            <img 
+                                src="music/images/thumbs/1756319655_1246_mp3_thumb.jpg" 
+                                alt="Super power" 
+                                class="w-16 h-16 rounded-sm object-cover">
+                            <div>
+                                <a href="song.php?id=4049" class="hover:text-red-500 transition-colors">
+                                    <h3 class="text-lg font-semibold">Super power</h3>
+                                </a>
+                                <p class="text-gray-400">Eddy Kenzo</p>
+                            </div>
+                        </div>
+                        <div class="flex space-x-4">
+                            <a href="https://momuziki.com/music/uploads/Super Power [Mastered] - Eddy Kenzo.mp3" download class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-download"></i>
+                                <span class="hidden md:inline">Download</span>
+                            </a>
+                            <a href="song.php?id=4049" class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-play"></i>
+                                <span class="hidden md:inline">Play</span>
+                            </a>
+                        </div>
+                    </div>
+                                        <div class="flex items-center justify-between p-4 rounded-lg">
+                        <div class="flex items-center space-x-4">
+                            <img 
+                                src="music/images/thumbs/1756319715_64372_mp3_thumb.jpg" 
+                                alt="Tupaate Remix" 
+                                class="w-16 h-16 rounded-sm object-cover">
+                            <div>
+                                <a href="song.php?id=4050" class="hover:text-red-500 transition-colors">
+                                    <h3 class="text-lg font-semibold">Tupaate Remix</h3>
+                                </a>
+                                <p class="text-gray-400">Eddy Kenzo</p>
+                            </div>
+                        </div>
+                        <div class="flex space-x-4">
+                            <a href="https://momuziki.com/music/uploads/TUPAATE_REMIX_-_Pia_Pounds_Ft._Eddy_Kenzo_and_Mc_Africa_(Latest_Ugandan_music_Videos)(720p).mp3" download class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-download"></i>
+                                <span class="hidden md:inline">Download</span>
+                            </a>
+                            <a href="song.php?id=4050" class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-play"></i>
+                                <span class="hidden md:inline">Play</span>
+                            </a>
+                        </div>
+                    </div>
+                                        <div class="flex items-center justify-between p-4 rounded-lg">
+                        <div class="flex items-center space-x-4">
+                            <img 
+                                src="music/images/thumbs/1756319761_17116_mp3_thumb.jpg" 
+                                alt="Weekenz" 
+                                class="w-16 h-16 rounded-sm object-cover">
+                            <div>
+                                <a href="song.php?id=4051" class="hover:text-red-500 transition-colors">
+                                    <h3 class="text-lg font-semibold">Weekenz</h3>
+                                </a>
+                                <p class="text-gray-400">Eddy Kenzo</p>
+                            </div>
+                        </div>
+                        <div class="flex space-x-4">
+                            <a href="https://momuziki.com/music/uploads/Weekend_-_Eddy_Kenzo[Official_Video](360p).mp3" download class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-download"></i>
+                                <span class="hidden md:inline">Download</span>
+                            </a>
+                            <a href="song.php?id=4051" class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-play"></i>
+                                <span class="hidden md:inline">Play</span>
+                            </a>
+                        </div>
+                    </div>
+                                        <div class="flex items-center justify-between p-4 rounded-lg">
+                        <div class="flex items-center space-x-4">
+                            <img 
+                                src="music/images/thumbs/1756319807_39705_mp3_thumb.jpg" 
+                                alt="Zivuga" 
+                                class="w-16 h-16 rounded-sm object-cover">
+                            <div>
+                                <a href="song.php?id=4052" class="hover:text-red-500 transition-colors">
+                                    <h3 class="text-lg font-semibold">Zivuga</h3>
+                                </a>
+                                <p class="text-gray-400">Eddy Kenzo</p>
+                            </div>
+                        </div>
+                        <div class="flex space-x-4">
+                            <a href="https://momuziki.com/music/uploads/Zivuga - Eddy Kenzo.mp3" download class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-download"></i>
+                                <span class="hidden md:inline">Download</span>
+                            </a>
+                            <a href="song.php?id=4052" class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-play"></i>
+                                <span class="hidden md:inline">Play</span>
+                            </a>
+                        </div>
+                    </div>
+                                        <div class="flex items-center justify-between p-4 rounded-lg">
+                        <div class="flex items-center space-x-4">
+                            <img 
+                                src="music/images/thumbs/1756999684_19313_mp3_thumb.jpg" 
+                                alt="Sango" 
+                                class="w-16 h-16 rounded-sm object-cover">
+                            <div>
+                                <a href="song.php?id=4271" class="hover:text-red-500 transition-colors">
+                                    <h3 class="text-lg font-semibold">Sango</h3>
+                                </a>
+                                <p class="text-gray-400">Eddy Kenzo,Martha Mukisa</p>
+                            </div>
+                        </div>
+                        <div class="flex space-x-4">
+                            <a href="https://momuziki.com/music/uploads/Sango_-_Eddy_Kenzo___Martha_Mukisa.mp3" download class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-download"></i>
+                                <span class="hidden md:inline">Download</span>
+                            </a>
+                            <a href="song.php?id=4271" class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-play"></i>
+                                <span class="hidden md:inline">Play</span>
+                            </a>
+                        </div>
+                    </div>
+                                        <div class="flex items-center justify-between p-4 rounded-lg">
+                        <div class="flex items-center space-x-4">
+                            <img 
+                                src="music/images/thumbs/1759009595_65219_mp3_thumb.jpg" 
+                                alt="Mbawe" 
+                                class="w-16 h-16 rounded-sm object-cover">
+                            <div>
+                                <a href="song.php?id=4919" class="hover:text-red-500 transition-colors">
+                                    <h3 class="text-lg font-semibold">Mbawe</h3>
+                                </a>
+                                <p class="text-gray-400">Eddy Kenzo</p>
+                            </div>
+                        </div>
+                        <div class="flex space-x-4">
+                            <a href="https://momuziki.com/music/uploads/Mbawe - Eddy Kenzo.mp3" download class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-download"></i>
+                                <span class="hidden md:inline">Download</span>
+                            </a>
+                            <a href="song.php?id=4919" class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-play"></i>
+                                <span class="hidden md:inline">Play</span>
+                            </a>
+                        </div>
+                    </div>
+                                        <div class="flex items-center justify-between p-4 rounded-lg">
+                        <div class="flex items-center space-x-4">
+                            <img 
+                                src="music/images/thumbs/1759932840_14126_mp3_thumb.jpg" 
+                                alt="Akwamaite Pressure" 
+                                class="w-16 h-16 rounded-sm object-cover">
+                            <div>
+                                <a href="song.php?id=5123" class="hover:text-red-500 transition-colors">
+                                    <h3 class="text-lg font-semibold">Akwamaite Pressure</h3>
+                                </a>
+                                <p class="text-gray-400">Eddy Kenzo</p>
+                            </div>
+                        </div>
+                        <div class="flex space-x-4">
+                            <a href="https://momuziki.com/music/uploads/Eddy Kenzo Ft Iboyan - Akwamaite Pressure.mp3" download class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-download"></i>
+                                <span class="hidden md:inline">Download</span>
+                            </a>
+                            <a href="song.php?id=5123" class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-play"></i>
+                                <span class="hidden md:inline">Play</span>
+                            </a>
+                        </div>
+                    </div>
+                                        <div class="flex items-center justify-between p-4 rounded-lg">
+                        <div class="flex items-center space-x-4">
+                            <img 
+                                src="music/images/thumbs/1759933267_28857_mp3_thumb.jpg" 
+                                alt="Akwamaite Pressure" 
+                                class="w-16 h-16 rounded-sm object-cover">
+                            <div>
+                                <a href="song.php?id=5124" class="hover:text-red-500 transition-colors">
+                                    <h3 class="text-lg font-semibold">Akwamaite Pressure</h3>
+                                </a>
+                                <p class="text-gray-400">Eddy Kenzo,Francis Angiro Iboy...</p>
+                            </div>
+                        </div>
+                        <div class="flex space-x-4">
+                            <a href="https://momuziki.com/music/uploads/Eddy Kenzo Ft Iboyan - Akwamaite Pressure.mp3" download class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-download"></i>
+                                <span class="hidden md:inline">Download</span>
+                            </a>
+                            <a href="song.php?id=5124" class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-play"></i>
+                                <span class="hidden md:inline">Play</span>
+                            </a>
+                        </div>
+                    </div>
+                                        <div class="flex items-center justify-between p-4 rounded-lg">
+                        <div class="flex items-center space-x-4">
+                            <img 
+                                src="music/images/thumbs/1760131601_85054_mp3_thumb.jpg" 
+                                alt="Love Guarantee" 
+                                class="w-16 h-16 rounded-sm object-cover">
+                            <div>
+                                <a href="song.php?id=5145" class="hover:text-red-500 transition-colors">
+                                    <h3 class="text-lg font-semibold">Love Guarantee</h3>
+                                </a>
+                                <p class="text-gray-400">Eddy Kenzo,Temperatute Touch</p>
+                            </div>
+                        </div>
+                        <div class="flex space-x-4">
+                            <a href="https://momuziki.com/music/uploads/Love Guarantee   Temperature Touch Ft Eddy Kenzo.mp3" download class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-download"></i>
+                                <span class="hidden md:inline">Download</span>
+                            </a>
+                            <a href="song.php?id=5145" class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-play"></i>
+                                <span class="hidden md:inline">Play</span>
+                            </a>
+                        </div>
+                    </div>
+                                        <div class="flex items-center justify-between p-4 rounded-lg">
+                        <div class="flex items-center space-x-4">
+                            <img 
+                                src="music/images/thumbs/1760282329_6787_mp3_thumb.jpg" 
+                                alt="Ndimudawa" 
+                                class="w-16 h-16 rounded-sm object-cover">
+                            <div>
+                                <a href="song.php?id=5186" class="hover:text-red-500 transition-colors">
+                                    <h3 class="text-lg font-semibold">Ndimudawa</h3>
+                                </a>
+                                <p class="text-gray-400">Eddy Kenzo,Temperatute Touch</p>
+                            </div>
+                        </div>
+                        <div class="flex space-x-4">
+                            <a href="https://momuziki.com/music/uploads/Ndimudawa Mukama - Temperature Touch & Eddy Kenzo.mp3" download class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-download"></i>
+                                <span class="hidden md:inline">Download</span>
+                            </a>
+                            <a href="song.php?id=5186" class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-play"></i>
+                                <span class="hidden md:inline">Play</span>
+                            </a>
+                        </div>
+                    </div>
+                                        <div class="flex items-center justify-between p-4 rounded-lg">
+                        <div class="flex items-center space-x-4">
+                            <img 
+                                src="music/images/thumbs/1760522329_10568_mp3_thumb.jpg" 
+                                alt="Tugenda Kukudiza" 
+                                class="w-16 h-16 rounded-sm object-cover">
+                            <div>
+                                <a href="song.php?id=5198" class="hover:text-red-500 transition-colors">
+                                    <h3 class="text-lg font-semibold">Tugenda Kukudiza</h3>
+                                </a>
+                                <p class="text-gray-400">Eddy Kenzo</p>
+                            </div>
+                        </div>
+                        <div class="flex space-x-4">
+                            <a href="https://momuziki.com/music/uploads/Tugenda Kukudiza - Eddy Kenzo ft. Oscar Daphine, Edgar Stuart & Diana Kwagala.mp3" download class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-download"></i>
+                                <span class="hidden md:inline">Download</span>
+                            </a>
+                            <a href="song.php?id=5198" class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-play"></i>
+                                <span class="hidden md:inline">Play</span>
+                            </a>
+                        </div>
+                    </div>
+                                        <div class="flex items-center justify-between p-4 rounded-lg">
+                        <div class="flex items-center space-x-4">
+                            <img 
+                                src="music/images/thumbs/1760770137_60848_mp3_thumb.jpg" 
+                                alt="Tick" 
+                                class="w-16 h-16 rounded-sm object-cover">
+                            <div>
+                                <a href="song.php?id=5232" class="hover:text-red-500 transition-colors">
+                                    <h3 class="text-lg font-semibold">Tick</h3>
+                                </a>
+                                <p class="text-gray-400">Eddy Kenzo</p>
+                            </div>
+                        </div>
+                        <div class="flex space-x-4">
+                            <a href="https://momuziki.com/music/uploads/Tick - Eddy Kenzo, Oscar, Daphine, Edgar.mp3" download class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-download"></i>
+                                <span class="hidden md:inline">Download</span>
+                            </a>
+                            <a href="song.php?id=5232" class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-play"></i>
+                                <span class="hidden md:inline">Play</span>
+                            </a>
+                        </div>
+                    </div>
+                                        <div class="flex items-center justify-between p-4 rounded-lg">
+                        <div class="flex items-center space-x-4">
+                            <img 
+                                src="music/images/thumbs/1760818540_19665_mp3_thumb.jpg" 
+                                alt="Yoweri" 
+                                class="w-16 h-16 rounded-sm object-cover">
+                            <div>
+                                <a href="song.php?id=5233" class="hover:text-red-500 transition-colors">
+                                    <h3 class="text-lg font-semibold">Yoweri</h3>
+                                </a>
+                                <p class="text-gray-400">Eddy Kenzo</p>
+                            </div>
+                        </div>
+                        <div class="flex space-x-4">
+                            <a href="https://momuziki.com/music/uploads/Yoweri - Eddy Kenzo ft. Edgar, Daphine, and Oscar.mp3" download class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-download"></i>
+                                <span class="hidden md:inline">Download</span>
+                            </a>
+                            <a href="song.php?id=5233" class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-play"></i>
+                                <span class="hidden md:inline">Play</span>
+                            </a>
+                        </div>
+                    </div>
+                                        <div class="flex items-center justify-between p-4 rounded-lg">
+                        <div class="flex items-center space-x-4">
+                            <img 
+                                src="music/images/thumbs/1762118636_63386_mp3_thumb.jpg" 
+                                alt="Ndi Bulala (The Story)" 
+                                class="w-16 h-16 rounded-sm object-cover">
+                            <div>
+                                <a href="song.php?id=5363" class="hover:text-red-500 transition-colors">
+                                    <h3 class="text-lg font-semibold">Ndi Bulala (The Story)</h3>
+                                </a>
+                                <p class="text-gray-400">Eddy Kenzo</p>
+                            </div>
+                        </div>
+                        <div class="flex space-x-4">
+                            <a href="https://momuziki.com/music/uploads/Ndi Bilala (The Story) - Eddy Kenzo.mp3" download class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-download"></i>
+                                <span class="hidden md:inline">Download</span>
+                            </a>
+                            <a href="song.php?id=5363" class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-play"></i>
+                                <span class="hidden md:inline">Play</span>
+                            </a>
+                        </div>
+                    </div>
+                                        <div class="flex items-center justify-between p-4 rounded-lg">
+                        <div class="flex items-center space-x-4">
+                            <img 
+                                src="music/images/thumbs/1765050580_43207_mp3_thumb.jpg" 
+                                alt="Unaware" 
+                                class="w-16 h-16 rounded-sm object-cover">
+                            <div>
+                                <a href="song.php?id=5601" class="hover:text-red-500 transition-colors">
+                                    <h3 class="text-lg font-semibold">Unaware</h3>
+                                </a>
+                                <p class="text-gray-400">Eddy Kenzo</p>
+                            </div>
+                        </div>
+                        <div class="flex space-x-4">
+                            <a href="https://momuziki.com/music/uploads/Unaware  - Eddy Kenzo[Audio Lyrics Promo].mp3" download class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-download"></i>
+                                <span class="hidden md:inline">Download</span>
+                            </a>
+                            <a href="song.php?id=5601" class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-play"></i>
+                                <span class="hidden md:inline">Play</span>
+                            </a>
+                        </div>
+                    </div>
+                                        <div class="flex items-center justify-between p-4 rounded-lg">
+                        <div class="flex items-center space-x-4">
+                            <img 
+                                src="music/images/thumbs/1774729522_17106_mp3_thumb.jpg" 
+                                alt="Sikumanyi" 
+                                class="w-16 h-16 rounded-sm object-cover">
+                            <div>
+                                <a href="song.php?id=5871" class="hover:text-red-500 transition-colors">
+                                    <h3 class="text-lg font-semibold">Sikumanyi</h3>
+                                </a>
+                                <p class="text-gray-400">Eddy Kenzo</p>
+                            </div>
+                        </div>
+                        <div class="flex space-x-4">
+                            <a href="https://momuziki.com/music/uploads/Sikumanyi-Eddy-Kenzo.mp3" download class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-download"></i>
+                                <span class="hidden md:inline">Download</span>
+                            </a>
+                            <a href="song.php?id=5871" class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-play"></i>
+                                <span class="hidden md:inline">Play</span>
+                            </a>
+                        </div>
+                    </div>
+                                        <div class="flex items-center justify-between p-4 rounded-lg">
+                        <div class="flex items-center space-x-4">
+                            <img 
+                                src="music/images/thumbs/1793792137_62250_mp3_thumb.jpeg" 
+                                alt="Bimala amanyi" 
+                                class="w-16 h-16 rounded-sm object-cover">
+                            <div>
+                                <a href="song.php?id=5980" class="hover:text-red-500 transition-colors">
+                                    <h3 class="text-lg font-semibold">Bimala amanyi</h3>
+                                </a>
+                                <p class="text-gray-400">Eddy Kenzo</p>
+                            </div>
+                        </div>
+                        <div class="flex space-x-4">
+                            <a href="https://momuziki.com/music/uploads/Bimala Amaanyi - Eddy Kenzo[Audio Promo](MP3_160K).mp3" download class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-download"></i>
+                                <span class="hidden md:inline">Download</span>
+                            </a>
+                            <a href="song.php?id=5980" class="flex items-center space-x-1 text-gray-400 hover:text-white border-gray-400 border rounded px-3 py-1 transition-all duration-200 hover:border-red-500">
+                                <i class="fas fa-play"></i>
+                                <span class="hidden md:inline">Play</span>
+                            </a>
+                        </div>
+                    </div>
+                    </div>    </section>
+    <footer class="border-t border-gray-800 pt-8 pb-6 mt-12">
+
+<!-- Alphabetical Browse Section -->
+<section class="mb-10">
+    <div class="section-title mb-4 justify-center">
+        <a href="a_z.php">
+            <button class="text-xl text-current text-center border-2 border-gray-400 px-2 py-1 transition-colors duration-300 hover:border-red-500 hover:text-red-500">A-Z</button>
+        </a>
+    </div>
+    <div class="overflow-x-auto" style="-ms-overflow-style: none; scrollbar-width: none;">
+        <style>
+            .overflow-x-auto::-webkit-scrollbar {
+                display: none;
+            }
+        </style>
+        <div class="flex gap-2 whitespace-nowrap">
+        <a href="a_z.php?letter=A" class="px-3 py-1 text-current rounded-full text-base hover:text-orange-300">A</a><a href="a_z.php?letter=B" class="px-3 py-1 text-current rounded-full text-base hover:text-orange-300">B</a><a href="a_z.php?letter=C" class="px-3 py-1 text-current rounded-full text-base hover:text-orange-300">C</a><a href="a_z.php?letter=D" class="px-3 py-1 text-current rounded-full text-base hover:text-orange-300">D</a><a href="a_z.php?letter=E" class="px-3 py-1 text-current rounded-full text-base hover:text-orange-300">E</a><a href="a_z.php?letter=F" class="px-3 py-1 text-current rounded-full text-base hover:text-orange-300">F</a><a href="a_z.php?letter=G" class="px-3 py-1 text-current rounded-full text-base hover:text-orange-300">G</a><a href="a_z.php?letter=H" class="px-3 py-1 text-current rounded-full text-base hover:text-orange-300">H</a><a href="a_z.php?letter=I" class="px-3 py-1 text-current rounded-full text-base hover:text-orange-300">I</a><a href="a_z.php?letter=J" class="px-3 py-1 text-current rounded-full text-base hover:text-orange-300">J</a><a href="a_z.php?letter=K" class="px-3 py-1 text-current rounded-full text-base hover:text-orange-300">K</a><a href="a_z.php?letter=L" class="px-3 py-1 text-current rounded-full text-base hover:text-orange-300">L</a><a href="a_z.php?letter=M" class="px-3 py-1 text-current rounded-full text-base hover:text-orange-300">M</a><a href="a_z.php?letter=N" class="px-3 py-1 text-current rounded-full text-base hover:text-orange-300">N</a><a href="a_z.php?letter=O" class="px-3 py-1 text-current rounded-full text-base hover:text-orange-300">O</a><a href="a_z.php?letter=P" class="px-3 py-1 text-current rounded-full text-base hover:text-orange-300">P</a><a href="a_z.php?letter=Q" class="px-3 py-1 text-current rounded-full text-base hover:text-orange-300">Q</a><a href="a_z.php?letter=R" class="px-3 py-1 text-current rounded-full text-base hover:text-orange-300">R</a><a href="a_z.php?letter=S" class="px-3 py-1 text-current rounded-full text-base hover:text-orange-300">S</a><a href="a_z.php?letter=T" class="px-3 py-1 text-current rounded-full text-base hover:text-orange-300">T</a><a href="a_z.php?letter=U" class="px-3 py-1 text-current rounded-full text-base hover:text-orange-300">U</a><a href="a_z.php?letter=V" class="px-3 py-1 text-current rounded-full text-base hover:text-orange-300">V</a><a href="a_z.php?letter=W" class="px-3 py-1 text-current rounded-full text-base hover:text-orange-300">W</a><a href="a_z.php?letter=X" class="px-3 py-1 text-current rounded-full text-base hover:text-orange-300">X</a><a href="a_z.php?letter=Y" class="px-3 py-1 text-current rounded-full text-base hover:text-orange-300">Y</a><a href="a_z.php?letter=Z" class="px-3 py-1 text-current rounded-full text-base hover:text-orange-300">Z</a><a href="a_z.php?letter=%23" class="px-3 py-1 text-current rounded-full text-base hover:text-orange-300">#</a>        </div>
+    </div>
+</section>
+
+<div class="border-t border-gray-800 pt-8 pb-2 mt-4"></div>
+<!-- Categories Section -->
+<section class="mb-10">
+        <div class="flex flex-wrap gap-2 mb-6">
+        <a href="categories.php" class="px-4 py-1 border border-red-500 text-red-500 rounded-full text-sm hover:bg-red-500 hover:text-white transition-colors duration-300">All</a>
+                    <a href="category.php?id=8" 
+               class="px-4 py-1 border border-red-500 text-red-500 rounded-full text-sm hover:bg-red-500 hover:text-white transition-colors duration-300">
+                Afro Beat            </a>
+                    <a href="category.php?id=22" 
+               class="px-4 py-1 border border-red-500 text-red-500 rounded-full text-sm hover:bg-red-500 hover:text-white transition-colors duration-300">
+                Badama            </a>
+                    <a href="category.php?id=20" 
+               class="px-4 py-1 border border-red-500 text-red-500 rounded-full text-sm hover:bg-red-500 hover:text-white transition-colors duration-300">
+                Bagishu Collections            </a>
+                    <a href="category.php?id=13" 
+               class="px-4 py-1 border border-red-500 text-red-500 rounded-full text-sm hover:bg-red-500 hover:text-white transition-colors duration-300">
+                Band Music            </a>
+                    <a href="category.php?id=19" 
+               class="px-4 py-1 border border-red-500 text-red-500 rounded-full text-sm hover:bg-red-500 hover:text-white transition-colors duration-300">
+                Banyankole Gospel            </a>
+                    <a href="category.php?id=21" 
+               class="px-4 py-1 border border-red-500 text-red-500 rounded-full text-sm hover:bg-red-500 hover:text-white transition-colors duration-300">
+                Basamya Hits            </a>
+                    <a href="category.php?id=25" 
+               class="px-4 py-1 border border-red-500 text-red-500 rounded-full text-sm hover:bg-red-500 hover:text-white transition-colors duration-300">
+                Busoga Collections            </a>
+                    <a href="category.php?id=27" 
+               class="px-4 py-1 border border-red-500 text-red-500 rounded-full text-sm hover:bg-red-500 hover:text-white transition-colors duration-300">
+                Christmas Songs            </a>
+                    <a href="category.php?id=11" 
+               class="px-4 py-1 border border-red-500 text-red-500 rounded-full text-sm hover:bg-red-500 hover:text-white transition-colors duration-300">
+                Cultural            </a>
+                    <a href="category.php?id=18" 
+               class="px-4 py-1 border border-red-500 text-red-500 rounded-full text-sm hover:bg-red-500 hover:text-white transition-colors duration-300">
+                Dancehall            </a>
+                    <a href="category.php?id=30" 
+               class="px-4 py-1 border border-red-500 text-red-500 rounded-full text-sm hover:bg-red-500 hover:text-white transition-colors duration-300">
+                Enyimba Za Kristo (Hymns)            </a>
+                    <a href="category.php?id=10" 
+               class="px-4 py-1 border border-red-500 text-red-500 rounded-full text-sm hover:bg-red-500 hover:text-white transition-colors duration-300">
+                Gospel            </a>
+                    <a href="category.php?id=29" 
+               class="px-4 py-1 border border-red-500 text-red-500 rounded-full text-sm hover:bg-red-500 hover:text-white transition-colors duration-300">
+                Gospel Songs Varities            </a>
+                    <a href="category.php?id=15" 
+               class="px-4 py-1 border border-red-500 text-red-500 rounded-full text-sm hover:bg-red-500 hover:text-white transition-colors duration-300">
+                Hip Hop            </a>
+                    <a href="category.php?id=23" 
+               class="px-4 py-1 border border-red-500 text-red-500 rounded-full text-sm hover:bg-red-500 hover:text-white transition-colors duration-300">
+                Kadongo Kamu            </a>
+                    <a href="category.php?id=26" 
+               class="px-4 py-1 border border-red-500 text-red-500 rounded-full text-sm hover:bg-red-500 hover:text-white transition-colors duration-300">
+                Nonstops            </a>
+                    <a href="category.php?id=28" 
+               class="px-4 py-1 border border-red-500 text-red-500 rounded-full text-sm hover:bg-red-500 hover:text-white transition-colors duration-300">
+                Reggea            </a>
+                    <a href="category.php?id=17" 
+               class="px-4 py-1 border border-red-500 text-red-500 rounded-full text-sm hover:bg-red-500 hover:text-white transition-colors duration-300">
+                Religion Obumu            </a>
+            </div>
+</section>
+
+<div class="border-t border-gray-800 pt-8 pb-2 mt-4"></div>
+<!-- Footer Sitemap -->
+    <div class="grid grid-cols-2 md:grid-cols-6 gap-4 mb-6">
+                    <div>
+                <h3 class="text-sm font-bold mb-2 text-current">Genres</h3>
+                <ul class="text-current/70">
+                                            <li class="mb-1 text-xs">
+                            <a href="#" class="hover:text-orange-500">Pop</a>
+                        </li>
+                                            <li class="mb-1 text-xs">
+                            <a href="#" class="hover:text-orange-500">Rock</a>
+                        </li>
+                                            <li class="mb-1 text-xs">
+                            <a href="#" class="hover:text-orange-500">Hip-Hop</a>
+                        </li>
+                                            <li class="mb-1 text-xs">
+                            <a href="#" class="hover:text-orange-500">Dance</a>
+                        </li>
+                                            <li class="mb-1 text-xs">
+                            <a href="#" class="hover:text-orange-500">R&B</a>
+                        </li>
+                                            <li class="mb-1 text-xs">
+                            <a href="#" class="hover:text-orange-500">Classical</a>
+                        </li>
+                                    </ul>
+            </div>
+                    <div>
+                <h3 class="text-sm font-bold mb-2 text-current">Links</h3>
+                <ul class="text-current/70">
+                                            <li class="mb-1 text-xs">
+                            <a href="#" class="hover:text-orange-500">Home</a>
+                        </li>
+                                            <li class="mb-1 text-xs">
+                            <a href="#" class="hover:text-orange-500">About</a>
+                        </li>
+                                            <li class="mb-1 text-xs">
+                            <a href="#" class="hover:text-orange-500">Contact</a>
+                        </li>
+                                            <li class="mb-1 text-xs">
+                            <a href="#" class="hover:text-orange-500">Support</a>
+                        </li>
+                                            <li class="mb-1 text-xs">
+                            <a href="#" class="hover:text-orange-500">Terms</a>
+                        </li>
+                                            <li class="mb-1 text-xs">
+                            <a href="#" class="hover:text-orange-500">Privacy</a>
+                        </li>
+                                    </ul>
+            </div>
+                    <div>
+                <h3 class="text-sm font-bold mb-2 text-current">Discover</h3>
+                <ul class="text-current/70">
+                                            <li class="mb-1 text-xs">
+                            <a href="#" class="hover:text-orange-500">Playlists</a>
+                        </li>
+                                            <li class="mb-1 text-xs">
+                            <a href="#" class="hover:text-orange-500">Charts</a>
+                        </li>
+                                            <li class="mb-1 text-xs">
+                            <a href="#" class="hover:text-orange-500">New Releases</a>
+                        </li>
+                                            <li class="mb-1 text-xs">
+                            <a href="#" class="hover:text-orange-500">Radio</a>
+                        </li>
+                                            <li class="mb-1 text-xs">
+                            <a href="#" class="hover:text-orange-500">Moods</a>
+                        </li>
+                                            <li class="mb-1 text-xs">
+                            <a href="#" class="hover:text-orange-500">Podcasts</a>
+                        </li>
+                                    </ul>
+            </div>
+                    <div>
+                <h3 class="text-sm font-bold mb-2 text-current">Account</h3>
+                <ul class="text-current/70">
+                                            <li class="mb-1 text-xs">
+                            <a href="#" class="hover:text-orange-500">Login</a>
+                        </li>
+                                            <li class="mb-1 text-xs">
+                            <a href="#" class="hover:text-orange-500">Register</a>
+                        </li>
+                                            <li class="mb-1 text-xs">
+                            <a href="#" class="hover:text-orange-500">Settings</a>
+                        </li>
+                                            <li class="mb-1 text-xs">
+                            <a href="#" class="hover:text-orange-500">Profile</a>
+                        </li>
+                                            <li class="mb-1 text-xs">
+                            <a href="#" class="hover:text-orange-500">History</a>
+                        </li>
+                                            <li class="mb-1 text-xs">
+                            <a href="#" class="hover:text-orange-500">Logout</a>
+                        </li>
+                                    </ul>
+            </div>
+                    <div>
+                <h3 class="text-sm font-bold mb-2 text-current">Resources</h3>
+                <ul class="text-current/70">
+                                            <li class="mb-1 text-xs">
+                            <a href="#" class="hover:text-orange-500">Help Center</a>
+                        </li>
+                                            <li class="mb-1 text-xs">
+                            <a href="#" class="hover:text-orange-500">Developers</a>
+                        </li>
+                                            <li class="mb-1 text-xs">
+                            <a href="#" class="hover:text-orange-500">App</a>
+                        </li>
+                                            <li class="mb-1 text-xs">
+                            <a href="#" class="hover:text-orange-500">Blog</a>
+                        </li>
+                                            <li class="mb-1 text-xs">
+                            <a href="#" class="hover:text-orange-500">Community</a>
+                        </li>
+                                            <li class="mb-1 text-xs">
+                            <a href="#" class="hover:text-orange-500">FAQ</a>
+                        </li>
+                                    </ul>
+            </div>
+                    <div>
+                <h3 class="text-sm font-bold mb-2 text-current">Legal</h3>
+                <ul class="text-current/70">
+                                            <li class="mb-1 text-xs">
+                            <a href="#" class="hover:text-orange-500">Terms of Use</a>
+                        </li>
+                                            <li class="mb-1 text-xs">
+                            <a href="#" class="hover:text-orange-500">Privacy Policy</a>
+                        </li>
+                                            <li class="mb-1 text-xs">
+                            <a href="#" class="hover:text-orange-500">Cookie Policy</a>
+                        </li>
+                                            <li class="mb-1 text-xs">
+                            <a href="#" class="hover:text-orange-500">GDPR</a>
+                        </li>
+                                            <li class="mb-1 text-xs">
+                            <a href="#" class="hover:text-orange-500">CCPA</a>
+                        </li>
+                                            <li class="mb-1 text-xs">
+                            <a href="#" class="hover:text-orange-500">DMCA</a>
+                        </li>
+                                    </ul>
+            </div>
+            </div>
+    
+    <div class="flex flex-col md:flex-row justify-between items-center border-t border-gray-800 pt-6">
+        <div class="text-sm text-current/70 mb-4 md:mb-0">
+            <a href="#" class="text-md font-bold text-red-500">
+                <span class="text-current">Mo Muziki</span> UG
+            </a>
+            <p class="mt-1">© 2025 Mo Muziki UG. All rights reserved.</p>
+        </div>
+        <div class="flex space-x-4">
+            <a href="#" class="text-current/70 hover:text-orange-500"><i class="fab fa-facebook"></i></a>
+            <a href="#" class="text-current/70 hover:text-orange-500"><i class="fab fa-twitter"></i></a>
+            <a href="#" class="text-current/70 hover:text-orange-500"><i class="fab fa-instagram"></i></a>
+            <a href="#" class="text-current/70 hover:text-orange-500"><i class="fab fa-youtube"></i></a>
+        </div>
+    </div>
+</footer>
+</main>
+
+</body>
+</html>
