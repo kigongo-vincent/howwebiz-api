@@ -13,7 +13,6 @@ go run .                  # API on :3000
 ```
 
 ## API docs (Swagger)
-
 With the server running:
 
 - **Swagger UI:** http://localhost:3000/docs (try requests in the browser; set `X-API-Key` under *Authorize* when `API_KEY` is set)
