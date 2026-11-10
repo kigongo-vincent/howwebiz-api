@@ -1,12 +1,14 @@
 package config
 
 import (
-	"fmt"
 	"log"
 	"log/slog"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/glebarez/sqlite"
@@ -106,14 +108,27 @@ func ConnectDB() *gorm.DB {
 	var dial gorm.Dialector
 	switch driver := base.Env("DB_DRIVER", "postgres"); driver {
 	case "postgres":
-		dsn := fmt.Sprintf("host=%s port=%s dbname=%s password=%s user=%s sslmode=%s TimeZone=UTC",
-			base.Env("DB_HOST", "localhost"),
-			base.Env("DB_PORT", "5432"),
-			base.Env("DB_NAME", "howwebiz"),
-			os.Getenv("DB_PASSWORD"),
-			base.Env("DB_USER", "postgres"),
-			base.Env("DB_SSLMODE", "disable"),
-		)
+		// say plainly which settings didn't arrive (a container started without
+		// its env file otherwise shows up as a baffling "user=root" on localhost)
+		var missing []string
+		for _, k := range []string{"DB_HOST", "DB_NAME", "DB_USER", "DB_PASSWORD"} {
+			if strings.TrimSpace(os.Getenv(k)) == "" {
+				missing = append(missing, k)
+			}
+		}
+		if len(missing) > 0 {
+			slog.Warn("database settings not set, using defaults: check the env file this process was started with", "missing", strings.Join(missing, ","))
+		}
+		// a URL, with every part escaped: an empty or odd password can't shift
+		// the other settings (in "key=value" form an empty password swallowed user=)
+		q := url.Values{"sslmode": {base.Env("DB_SSLMODE", "disable")}, "TimeZone": {"UTC"}}
+		dsn := (&url.URL{
+			Scheme:   "postgres",
+			User:     url.UserPassword(base.Env("DB_USER", "postgres"), os.Getenv("DB_PASSWORD")),
+			Host:     net.JoinHostPort(base.Env("DB_HOST", "localhost"), base.Env("DB_PORT", "5432")),
+			Path:     "/" + base.Env("DB_NAME", "howwebiz"),
+			RawQuery: q.Encode(),
+		}).String()
 		dial = postgres.New(postgres.Config{DSN: dsn, PreferSimpleProtocol: true})
 	case "sqlite":
 		dial = sqlite.Open(base.Env("DB_PATH", "howwebiz.db") + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
