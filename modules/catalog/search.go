@@ -75,6 +75,9 @@ type SearchService struct {
 	// textIndexed: every row has search_text, so text queries use its
 	// trigram index (until then, the original per-column match).
 	textIndexed atomic.Bool
+	// BackfillPause is slept between PrepareSearchText batches so a
+	// backfill of the whole catalog never saturates a small database.
+	BackfillPause time.Duration
 
 	mu    sync.Mutex
 	cache map[string]time.Time // provider|query → when it was last fetched
@@ -120,6 +123,13 @@ func (s *SearchService) PrepareSearchText(ctx context.Context) error {
 		}
 		filled += len(rows)
 		after = rows[len(rows)-1].ID
+		if filled%(20*batch) == 0 {
+			slog.Info("catalog: search index backfill", "filled", filled)
+		}
+		select {
+		case <-ctx.Done():
+		case <-time.After(s.BackfillPause):
+		}
 	}
 	return ctx.Err()
 }

@@ -150,7 +150,7 @@ func ConnectDB() *gorm.DB {
 		sqlDB.SetMaxOpenConns(1)
 	}
 
-	if err := db.AutoMigrate(
+	if err := migrate(db,
 		&song.Song{},
 		&genre.Genre{},
 		&chart.Snapshot{},
@@ -177,9 +177,9 @@ func ConnectDB() *gorm.DB {
 	); err != nil {
 		log.Fatalf("failed to migrate application database: %v", err)
 	}
+	// Only the fast part here; indexes are built in the background once the
+	// API is listening (see Wire).
 	search.Setup(db)
-	catalog.Setup(db)
-	ensureIndexes(db)
 	return db
 }
 

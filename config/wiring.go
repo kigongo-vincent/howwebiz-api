@@ -79,37 +79,45 @@ func Wire(ctx context.Context, db *gorm.DB, app *fiber.App, background bool) Dep
 	rc := newCache(ctx)
 	indexer := &catalog.Indexer{DB: db, Ingester: ingester, Stores: stores, Batch: 500}
 	searchSvc := &catalog.SearchService{DB: db, Ingester: ingester, Searchers: searchers,
-		Timeout:   base.EnvDuration("CATALOG_LIVE_TIMEOUT", 8*time.Second),
-		CacheTTL:  base.EnvDuration("CATALOG_LIVE_CACHE_TTL", 15*time.Minute),
-		Cache:     rc,
-		ResultTTL: base.EnvDuration("CATALOG_RESULT_CACHE_TTL", 60*time.Second),
-		CountTTL:  base.EnvDuration("CATALOG_COUNT_CACHE_TTL", 5*time.Minute)}
+		Timeout:       base.EnvDuration("CATALOG_LIVE_TIMEOUT", 8*time.Second),
+		CacheTTL:      base.EnvDuration("CATALOG_LIVE_CACHE_TTL", 15*time.Minute),
+		Cache:         rc,
+		ResultTTL:     base.EnvDuration("CATALOG_RESULT_CACHE_TTL", 60*time.Second),
+		CountTTL:      base.EnvDuration("CATALOG_COUNT_CACHE_TTL", 5*time.Minute),
+		BackfillPause: base.EnvDuration("CATALOG_BACKFILL_PAUSE", 100*time.Millisecond)}
 	cat := &catalog.Service{DB: db, Ingester: ingester, Indexer: indexer, Providers: providers, Search: searchSvc}
 
 	deps := Dependencies{DB: db, App: app, Crawler: engine, AudioCom: audioCom, Momuziki: mom, Catalog: cat, Sites: sites, Cache: rc}
-	if !background {
+	// Database upkeep: indexes, the audio-only purge, the search_text
+	// backfill, then its index. None of it is on the boot path: on a large
+	// catalog or a slow database it takes minutes, and the API serves
+	// meanwhile (just slower until the indexes exist).
+	dialect := db.Dialector.Name()
+	upkeep := func(purge bool) {
+		start := time.Now()
+		base.EnsureIndexes(ctx, db, appIndexes(dialect))
+		if purge {
+			// Enforce "only songs with audio" on data stored before the rule.
+			if st, err := ingester.PurgeWithoutAudio(time.Now().UTC()); err != nil {
+				slog.Error("catalog: purge songs without audio", "err", err)
+			} else if st.SourcesRemoved > 0 || st.SongsRemoved > 0 {
+				slog.Info("catalog: purged songs without audio", "stats", st)
+				searchSvc.Bump(ctx)
+			}
+		}
 		if err := searchSvc.PrepareSearchText(ctx); err != nil {
 			slog.Error("catalog: search index backfill", "err", err)
 		}
+		base.EnsureIndexes(ctx, db, catalog.SearchIndexes(dialect))
+		if took := time.Since(start); took > time.Second {
+			slog.Info("database upkeep done", "took", took.Round(time.Second))
+		}
+	}
+	if !background {
+		upkeep(false) // tests: synchronous, nothing to purge
 	}
 	if background {
-		// Data upkeep off the boot path: at 100k+ rows it can take a while,
-		// and the API serves meanwhile (text search uses the per-column match
-		// until search_text is filled).
-		go func() {
-			_ = base.Safe("catalog upkeep", func() {
-				// Enforce "only songs with audio" on data stored before the rule.
-				if st, err := ingester.PurgeWithoutAudio(time.Now().UTC()); err != nil {
-					slog.Error("catalog: purge songs without audio", "err", err)
-				} else if st.SourcesRemoved > 0 || st.SongsRemoved > 0 {
-					slog.Info("catalog: purged songs without audio", "stats", st)
-					searchSvc.Bump(ctx)
-				}
-				if err := searchSvc.PrepareSearchText(ctx); err != nil {
-					slog.Error("catalog: search index backfill", "err", err)
-				}
-			})
-		}()
+		go func() { _ = base.Safe("database upkeep", func() { upkeep(true) }) }()
 		hooks := []func(){audioCom.DailySync, mom.DailySync}
 		for _, name := range sites.Names() {
 			hooks = append(hooks, sites[name].DailySync)

@@ -1,7 +1,6 @@
 package catalog
 
 import (
-	"log/slog"
 	"slices"
 	"strings"
 	"time"
@@ -296,11 +295,9 @@ func (in *Ingester) reaggregateChunk(tx *gorm.DB, ids []uint, now time.Time) err
 	return nil
 }
 
-// Setup adds the indexes that keep /songs fast on a large catalog
-// (hundreds of thousands of rows): one per sort order and filter, and on
-// Postgres a trigram index for substring text search. Best effort: a
-// missing index makes queries slower, never wrong.
-func Setup(db *gorm.DB) {
+// Indexes keeps /songs fast on a large catalog (hundreds of thousands of
+// rows): one per sort order and filter. Run with base.EnsureIndexes.
+func Indexes(dialect string) []string {
 	stmts := []string{
 		// sort orders (each ends in id, the tie-breaker the queries use)
 		`CREATE INDEX IF NOT EXISTS idx_catalog_songs_recent ON catalog_songs (first_seen_at DESC, id DESC)`,
@@ -309,20 +306,23 @@ func Setup(db *gorm.DB) {
 		// ?genre= compares LOWER(genre)
 		`CREATE INDEX IF NOT EXISTS idx_catalog_songs_genre_lower ON catalog_songs (LOWER(genre))`,
 	}
-	if db.Dialector.Name() == "postgres" {
+	if dialect == "postgres" {
+		// superseded by search_text (and never usable inside the old OR)
 		stmts = append(stmts,
-			`CREATE EXTENSION IF NOT EXISTS pg_trgm`,
-			`CREATE INDEX IF NOT EXISTS idx_catalog_songs_search_trgm ON catalog_songs USING gin (search_text gin_trgm_ops)`,
-			// superseded by search_text (and never usable inside the old OR)
 			`DROP INDEX IF EXISTS idx_catalog_songs_key_trgm`,
-			`DROP INDEX IF EXISTS idx_catalog_songs_title_trgm`,
-		)
+			`DROP INDEX IF EXISTS idx_catalog_songs_title_trgm`)
 	}
-	for _, s := range stmts {
-		if err := db.Exec(s).Error; err != nil {
-			slog.Warn("catalog: index setup skipped", "sql", s, "err", err)
-		}
+	return stmts
+}
+
+// SearchIndexes is the trigram index text queries use (Postgres; needs
+// pg_trgm). Build it after PrepareSearchText: filling the column first is
+// far cheaper than updating a GIN index row by row.
+func SearchIndexes(dialect string) []string {
+	if dialect != "postgres" {
+		return nil
 	}
+	return []string{`CREATE INDEX IF NOT EXISTS idx_catalog_songs_search_trgm ON catalog_songs USING gin (search_text gin_trgm_ops)`}
 }
 
 type PurgeStats struct {

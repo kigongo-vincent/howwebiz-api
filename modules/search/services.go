@@ -30,23 +30,25 @@ func NewService(db *gorm.DB) *SearchService {
 	}
 }
 
-// Setup prepares search indexes. On Postgres it enables pg_trgm and adds
-// trigram indexes so '%term%' matching and the fuzzy fallback stay fast on
-// a full catalog; failures (e.g. no CREATE privilege) just disable fuzzy.
+// Setup enables pg_trgm on Postgres (fast; the indexes that use it are
+// built in the background, see Indexes). Without it fuzzy search is off.
 func Setup(db *gorm.DB) {
 	if db.Dialector.Name() != "postgres" {
 		return
 	}
-	stmts := []string{
-		`CREATE EXTENSION IF NOT EXISTS pg_trgm`,
+	if err := db.Exec(`CREATE EXTENSION IF NOT EXISTS pg_trgm`).Error; err != nil {
+		slog.Warn("search: pg_trgm unavailable; fuzzy search disabled", "err", err)
+	}
+}
+
+// Indexes are the trigram indexes on songs (run with base.EnsureIndexes).
+func Indexes(dialect string) []string {
+	if dialect != "postgres" {
+		return nil
+	}
+	return []string{
 		`CREATE INDEX IF NOT EXISTS idx_songs_title_trgm ON songs USING gin (LOWER(title) gin_trgm_ops)`,
 		`CREATE INDEX IF NOT EXISTS idx_songs_artist_trgm ON songs USING gin (LOWER(artist) gin_trgm_ops)`,
-	}
-	for _, s := range stmts {
-		if err := db.Exec(s).Error; err != nil {
-			slog.Warn("search: trigram setup skipped; fuzzy search disabled", "err", err)
-			return
-		}
 	}
 }
 
