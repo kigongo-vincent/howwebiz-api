@@ -81,8 +81,10 @@ func (s Site) FeedPage(ctx context.Context, get sitecrawl.Fetch, feed, cursor st
 	if err != nil {
 		return nil, "", false, err
 	}
+	// Only an empty page ends a feed: the search index sometimes returns
+	// 99 of 100 mid-feed (deduplication), so a short page is not the end.
 	next := offset + pageSize
-	done := raw < pageSize || next+pageSize > window
+	done := raw == 0 || next+pageSize > window
 	return tracks, strconv.Itoa(next), done, nil
 }
 
@@ -140,7 +142,7 @@ func (s Site) Parse(body []byte) (int, []catalog.Track, error) {
 			artist = t.User.Handle
 		}
 		plays := t.PlayCount
-		ct := catalog.Track{Provider: Name, ExternalID: t.ID, Title: t.Title, Artist: artist, Genre: t.Genre,
+		ct := catalog.Track{Provider: Name, ExternalID: t.ID, Title: t.Title, Artist: artist, Genre: catalog.CleanGenre(t.Genre),
 			AudioURL:   s.Base + "/v1/tracks/" + url.PathEscape(t.ID) + "/stream?" + url.Values{"app_name": {s.AppName}}.Encode(),
 			PageURL:    "https://audius.co" + t.Permalink,
 			DurationMs: t.Duration * 1000, Plays: &plays, ReleasedAt: parseTime(t.ReleaseDate)}

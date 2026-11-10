@@ -57,10 +57,10 @@ func TestFeedPaging(t *testing.T) {
 	var paths []string
 	get := func(_ context.Context, p string) ([]byte, error) {
 		paths = append(paths, p)
-		return fixture(t, "feed_reggae.json"), nil // 3 < page size → end of feed
+		return fixture(t, "feed_reggae.json"), nil // a short page is not the end
 	}
 	tracks, next, done, err := site.FeedPage(context.Background(), get, "Reggae", "200")
-	if err != nil || !done || next != "300" || len(tracks) == 0 {
+	if err != nil || done || next != "300" || len(tracks) == 0 {
 		t.Fatalf("next=%q done=%v n=%d err=%v", next, done, len(tracks), err)
 	}
 	if !strings.Contains(paths[0], "genre=Reggae") || !strings.Contains(paths[0], "offset=200") || !strings.Contains(paths[0], "sort_method=recent") {
@@ -79,6 +79,10 @@ func TestFeedPaging(t *testing.T) {
 	}
 	if _, _, done, _ := site.FeedPage(context.Background(), full, "all", "0"); done {
 		t.Error("a full first page is not the end")
+	}
+	empty := func(context.Context, string) ([]byte, error) { return []byte(`{"data":[]}`), nil }
+	if _, _, done, _ := site.FeedPage(context.Background(), empty, "Kids", "300"); !done {
+		t.Error("an empty page ends the feed")
 	}
 }
 

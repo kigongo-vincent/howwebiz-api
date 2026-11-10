@@ -68,9 +68,11 @@ func (in *Ingester) ingestBatch(batch []Track, now time.Time) (IngestStats, erro
 	byRef := map[ref]Track{}
 	var order []ref
 	for _, t := range batch {
-		if t.Provider == "" || t.ExternalID == "" || (t.Title == "" && t.Artist == "") {
+		// An id too long to store cannot be matched again later: skip it.
+		if t.Provider == "" || t.ExternalID == "" || len([]rune(t.ExternalID)) > externalIDSize || (t.Title == "" && t.Artist == "") {
 			continue
 		}
+		t.Genre = CleanGenre(t.Genre)
 		r := ref{t.Provider, t.ExternalID}
 		if _, ok := byRef[r]; !ok {
 			order = append(order, r)

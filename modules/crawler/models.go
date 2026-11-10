@@ -47,7 +47,7 @@ type Stats struct {
 
 type CrawlRun struct {
 	ID         uint                        `json:"id" gorm:"primaryKey"`
-	Kind       string                      `json:"kind" gorm:"size:16;not null;default:lists;index"` // lists | catalog
+	Kind       string                      `json:"kind" gorm:"size:64;not null;default:lists;index"` // lists | catalog | <source> | site:<provider>
 	Trigger    string                      `json:"trigger" gorm:"size:16;not null"`                  // manual | cron | startup
 	Status     string                      `json:"status" gorm:"size:16;not null;index"`
 	Options    datatypes.JSON              `json:"options"`

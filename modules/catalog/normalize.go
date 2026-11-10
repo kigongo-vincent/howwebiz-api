@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"golang.org/x/text/runes"
 	"golang.org/x/text/transform"
@@ -87,6 +88,30 @@ type Identity struct {
 	Featured []string // other credited artists (display, deduplicated)
 }
 
+// Column sizes in models.go: values are clipped to fit, never rejected.
+const (
+	keySize        = 400
+	genreSize      = 64
+	externalIDSize = 128
+)
+
+// Clip shortens s to at most n characters (runes), never splitting one.
+func Clip(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n])
+}
+
+// CleanGenre makes a provider's genre fit the catalog: free-text lists
+// ("Rock, Stoner Rock, Doom Metal") keep their first entry.
+func CleanGenre(g string) string {
+	if first, _, ok := strings.Cut(g, ","); ok {
+		g = first
+	}
+	return Clip(strings.TrimSpace(g), genreSize)
+}
+
 // Identify computes the identity of a title/artist pair.
 func Identify(title, artist string, featured ...string) Identity {
 	cleanTitle, ft := CleanTitle(title)
@@ -104,7 +129,7 @@ func Identify(title, artist string, featured ...string) Identity {
 		}
 	}
 	return Identity{
-		Key:      Fold(primary) + "|" + Fold(cleanTitle),
+		Key:      Clip(Fold(primary)+"|"+Fold(cleanTitle), keySize),
 		Title:    cleanTitle,
 		Artist:   primary,
 		Featured: feat,

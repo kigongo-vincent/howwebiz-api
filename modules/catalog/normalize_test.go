@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -57,5 +58,23 @@ func TestIdentifyDisplayParts(t *testing.T) {
 	if id.Title != "Nassanga (Remix)" || id.Artist != "Kalifah AgaNaga" ||
 		!reflect.DeepEqual(id.Featured, []string{"Eddy Kenzo", "Winnie Nwagi", "Weasel"}) {
 		t.Fatalf("%+v", id)
+	}
+}
+
+// Postgres rejects values longer than a varchar column, failing the whole
+// batch; free-text provider values are cleaned to fit instead.
+func TestCleanGenreAndClip(t *testing.T) {
+	for in, want := range map[string]string{
+		"Rock, Stoner Rock, Doom Metal, Heavy Metal, Instrumental, Hard Rock, Fuzz": "Rock",
+		" Afrobeats ":           "Afrobeats",
+		"":                      "",
+		strings.Repeat("é", 80): strings.Repeat("é", 64),
+	} {
+		if got := CleanGenre(in); got != want {
+			t.Errorf("CleanGenre(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if got := Identify(strings.Repeat("long title ", 60), "Artist").Key; len([]rune(got)) > 400 {
+		t.Errorf("key has %d runes, column holds 400", len([]rune(got)))
 	}
 }
