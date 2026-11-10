@@ -9,10 +9,13 @@ import (
 // Song is one aggregated catalog entry. Display fields come from the
 // highest-priority provider that has them (CATALOG_PROVIDER_PRIORITY).
 type Song struct {
-	ID          uint                        `json:"id" gorm:"primaryKey"`
-	Key         string                      `json:"-" gorm:"size:400;uniqueIndex;not null"`
-	Title       string                      `json:"title"`
-	Artist      string                      `json:"artist" gorm:"index"`
+	ID     uint   `json:"id" gorm:"primaryKey"`
+	Key    string `json:"-" gorm:"size:400;uniqueIndex;not null"`
+	Title  string `json:"title"`
+	Artist string `json:"artist" gorm:"index"`
+	// SearchText is every searchable field folded into one string (see
+	// SearchText()), so a text query is one trigram-indexed LIKE per word.
+	SearchText  string                      `json:"-" gorm:"type:text;not null;default:''"`
 	Featured    datatypes.JSONSlice[string] `json:"featured"`
 	Genre       string                      `json:"genre" gorm:"size:64;index"`
 	CoverURL    string                      `json:"coverUrl"`

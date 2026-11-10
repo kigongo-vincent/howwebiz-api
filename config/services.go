@@ -179,6 +179,7 @@ func ConnectDB() *gorm.DB {
 	}
 	search.Setup(db)
 	catalog.Setup(db)
+	ensureIndexes(db)
 	return db
 }
 

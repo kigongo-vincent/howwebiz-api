@@ -46,6 +46,17 @@ func Fold(s string) string {
 	return strings.TrimSpace(nonAlnumRe.ReplaceAllString(s, " "))
 }
 
+// SearchText folds everything a text query may match — title, artist,
+// featured artists and the match key — into one string. Queries are folded
+// the same way, so accents and punctuation never prevent a hit.
+func SearchText(title, artist string, featured []string, key string) string {
+	parts := append([]string{Fold(title), Fold(artist)}, Fold(strings.ReplaceAll(key, "|", " ")))
+	for _, f := range featured {
+		parts = append(parts, Fold(f))
+	}
+	return strings.Join(parts, " ")
+}
+
 // CleanTitle removes packaging noise and featured-artist credits from a
 // title and returns the featured artists it found.
 func CleanTitle(title string) (clean string, featured []string) {

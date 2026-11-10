@@ -3,6 +3,7 @@ package config
 import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/kigongo-vincent/howwebiz-api/modules/audiocom"
+	"github.com/kigongo-vincent/howwebiz-api/modules/cache"
 	"github.com/kigongo-vincent/howwebiz-api/modules/catalog"
 	"github.com/kigongo-vincent/howwebiz-api/modules/crawler"
 	"github.com/kigongo-vincent/howwebiz-api/modules/momuziki"
@@ -19,4 +20,5 @@ type Dependencies struct {
 	Momuziki  *momuziki.Service
 	Catalog   *catalog.Service   // aggregated /songs
 	Sites     sitecrawl.Registry // generic HTML-site providers
+	Cache     *cache.Cache       // nil when REDIS_ENABLED=false
 }

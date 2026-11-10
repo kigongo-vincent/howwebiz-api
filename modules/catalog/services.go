@@ -67,7 +67,7 @@ func (s *Service) List(c *fiber.Ctx) error {
 	for i := range res.Songs {
 		s.orderSources(&res.Songs[i])
 	}
-	meta := fiber.Map{"query": q.Q}
+	meta := fiber.Map{"query": q.Q, "cached": res.Cached}
 	if res.Live != nil {
 		meta["live"] = res.Live
 		meta["ingested"] = res.Ingested
@@ -138,7 +138,9 @@ func (s *Service) ProvidersList(c *fiber.Ctx) error {
 
 // Reindex pulls everything changed from provider stores now.
 func (s *Service) Reindex(c *fiber.Ctx) error {
-	return c.JSON(base.APIResponse{Data: s.Indexer.RunOnce(c.UserContext()), Message: "indexed"})
+	out := s.Indexer.RunOnce(c.UserContext())
+	s.Search.Bump(c.UserContext())
+	return c.JSON(base.APIResponse{Data: out, Message: "indexed"})
 }
 
 // Cleanup removes stored songs without an audio URL (data from before the
@@ -148,5 +150,6 @@ func (s *Service) Cleanup(c *fiber.Ctx) error {
 	if err != nil {
 		return base.API_FAIL(c, fiber.StatusInternalServerError, "cleanup failed")
 	}
+	s.Search.Bump(c.UserContext())
 	return c.JSON(base.APIResponse{Data: st, Message: "removed songs without audio"})
 }

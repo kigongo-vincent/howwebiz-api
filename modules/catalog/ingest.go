@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"log/slog"
 	"slices"
 	"strings"
 	"time"
@@ -217,6 +218,17 @@ func (in *Ingester) reaggregate(tx *gorm.DB, songIDs map[uint]bool, now time.Tim
 	for id := range songIDs {
 		ids = append(ids, id)
 	}
+	// Bounded batches: a purge can touch tens of thousands of songs, and one
+	// giant IN list (plus every source preloaded) costs memory and planner time.
+	for chunk := range slices.Chunk(ids, 500) {
+		if err := in.reaggregateChunk(tx, chunk, now); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (in *Ingester) reaggregateChunk(tx *gorm.DB, ids []uint, now time.Time) error {
 	var songs []Song
 	if err := tx.Preload("Sources").Where("id IN ?", ids).Find(&songs).Error; err != nil {
 		return err
@@ -276,6 +288,7 @@ func (in *Ingester) reaggregate(tx *gorm.DB, songIDs map[uint]bool, now time.Tim
 		upd["featured"] = datatypes.NewJSONSlice(feat)
 		upd["providers"] = datatypes.NewJSONSlice(providers)
 		upd["source_count"] = len(srcs)
+		upd["search_text"] = SearchText(first.Title, first.Artist, feat, s.Key)
 		if err := tx.Model(&Song{}).Where("id = ?", s.ID).Updates(upd).Error; err != nil {
 			return err
 		}
@@ -283,19 +296,31 @@ func (in *Ingester) reaggregate(tx *gorm.DB, songIDs map[uint]bool, now time.Tim
 	return nil
 }
 
-// Setup adds Postgres trigram indexes so substring search over the
-// catalog stays fast (best effort; needs pg_trgm, which search.Setup
-// creates).
+// Setup adds the indexes that keep /songs fast on a large catalog
+// (hundreds of thousands of rows): one per sort order and filter, and on
+// Postgres a trigram index for substring text search. Best effort: a
+// missing index makes queries slower, never wrong.
 func Setup(db *gorm.DB) {
-	if db.Dialector.Name() != "postgres" {
-		return
+	stmts := []string{
+		// sort orders (each ends in id, the tie-breaker the queries use)
+		`CREATE INDEX IF NOT EXISTS idx_catalog_songs_recent ON catalog_songs (first_seen_at DESC, id DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_songs_plays ON catalog_songs (plays DESC, id DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_songs_title_sort ON catalog_songs (LOWER(title), id)`,
+		// ?genre= compares LOWER(genre)
+		`CREATE INDEX IF NOT EXISTS idx_catalog_songs_genre_lower ON catalog_songs (LOWER(genre))`,
 	}
-	for _, s := range []string{
-		`CREATE INDEX IF NOT EXISTS idx_catalog_songs_key_trgm ON catalog_songs USING gin (key gin_trgm_ops)`,
-		`CREATE INDEX IF NOT EXISTS idx_catalog_songs_title_trgm ON catalog_songs USING gin (LOWER(title) gin_trgm_ops)`,
-	} {
+	if db.Dialector.Name() == "postgres" {
+		stmts = append(stmts,
+			`CREATE EXTENSION IF NOT EXISTS pg_trgm`,
+			`CREATE INDEX IF NOT EXISTS idx_catalog_songs_search_trgm ON catalog_songs USING gin (search_text gin_trgm_ops)`,
+			// superseded by search_text (and never usable inside the old OR)
+			`DROP INDEX IF EXISTS idx_catalog_songs_key_trgm`,
+			`DROP INDEX IF EXISTS idx_catalog_songs_title_trgm`,
+		)
+	}
+	for _, s := range stmts {
 		if err := db.Exec(s).Error; err != nil {
-			return
+			slog.Warn("catalog: index setup skipped", "sql", s, "err", err)
 		}
 	}
 }
@@ -341,7 +366,8 @@ func (in *Ingester) PurgeWithoutAudio(now time.Time) (PurgeStats, error) {
 			return err
 		}
 		st.SongsUpdated = len(touched)
-		if err := tx.Where("id NOT IN (?)", tx.Model(&Source{}).Select("song_id")).Delete(&Song{}).Error; err != nil {
+		// NOT EXISTS uses the song_id index; NOT IN (subquery) can't.
+		if err := tx.Where("NOT EXISTS (SELECT 1 FROM catalog_sources WHERE catalog_sources.song_id = catalog_songs.id)").Delete(&Song{}).Error; err != nil {
 			return err
 		}
 		if err := tx.Model(&Song{}).Count(&after).Error; err != nil {

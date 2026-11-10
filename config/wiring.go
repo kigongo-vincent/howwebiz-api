@@ -8,6 +8,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/kigongo-vincent/howwebiz-api/modules/audiocom"
 	"github.com/kigongo-vincent/howwebiz-api/modules/base"
+	"github.com/kigongo-vincent/howwebiz-api/modules/cache"
 	"github.com/kigongo-vincent/howwebiz-api/modules/catalog"
 	"github.com/kigongo-vincent/howwebiz-api/modules/crawler"
 	"github.com/kigongo-vincent/howwebiz-api/modules/momuziki"
@@ -75,20 +76,40 @@ func Wire(ctx context.Context, db *gorm.DB, app *fiber.App, background bool) Dep
 		providers = append(providers, sites[name].Site.Info())
 	}
 
+	rc := newCache(ctx)
 	indexer := &catalog.Indexer{DB: db, Ingester: ingester, Stores: stores, Batch: 500}
-	cat := &catalog.Service{DB: db, Ingester: ingester, Indexer: indexer, Providers: providers,
-		Search: &catalog.SearchService{DB: db, Ingester: ingester, Searchers: searchers,
-			Timeout:  base.EnvDuration("CATALOG_LIVE_TIMEOUT", 8*time.Second),
-			CacheTTL: base.EnvDuration("CATALOG_LIVE_CACHE_TTL", 15*time.Minute)}}
+	searchSvc := &catalog.SearchService{DB: db, Ingester: ingester, Searchers: searchers,
+		Timeout:   base.EnvDuration("CATALOG_LIVE_TIMEOUT", 8*time.Second),
+		CacheTTL:  base.EnvDuration("CATALOG_LIVE_CACHE_TTL", 15*time.Minute),
+		Cache:     rc,
+		ResultTTL: base.EnvDuration("CATALOG_RESULT_CACHE_TTL", 60*time.Second),
+		CountTTL:  base.EnvDuration("CATALOG_COUNT_CACHE_TTL", 5*time.Minute)}
+	cat := &catalog.Service{DB: db, Ingester: ingester, Indexer: indexer, Providers: providers, Search: searchSvc}
 
-	deps := Dependencies{DB: db, App: app, Crawler: engine, AudioCom: audioCom, Momuziki: mom, Catalog: cat, Sites: sites}
-	if background {
-		// Enforce "only songs with audio" on data stored before the rule.
-		if st, err := ingester.PurgeWithoutAudio(time.Now().UTC()); err != nil {
-			slog.Error("catalog: purge songs without audio", "err", err)
-		} else if st.SourcesRemoved > 0 || st.SongsRemoved > 0 {
-			slog.Info("catalog: purged songs without audio", "stats", st)
+	deps := Dependencies{DB: db, App: app, Crawler: engine, AudioCom: audioCom, Momuziki: mom, Catalog: cat, Sites: sites, Cache: rc}
+	if !background {
+		if err := searchSvc.PrepareSearchText(ctx); err != nil {
+			slog.Error("catalog: search index backfill", "err", err)
 		}
+	}
+	if background {
+		// Data upkeep off the boot path: at 100k+ rows it can take a while,
+		// and the API serves meanwhile (text search uses the per-column match
+		// until search_text is filled).
+		go func() {
+			_ = base.Safe("catalog upkeep", func() {
+				// Enforce "only songs with audio" on data stored before the rule.
+				if st, err := ingester.PurgeWithoutAudio(time.Now().UTC()); err != nil {
+					slog.Error("catalog: purge songs without audio", "err", err)
+				} else if st.SourcesRemoved > 0 || st.SongsRemoved > 0 {
+					slog.Info("catalog: purged songs without audio", "stats", st)
+					searchSvc.Bump(ctx)
+				}
+				if err := searchSvc.PrepareSearchText(ctx); err != nil {
+					slog.Error("catalog: search index backfill", "err", err)
+				}
+			})
+		}()
 		hooks := []func(){audioCom.DailySync, mom.DailySync}
 		for _, name := range sites.Names() {
 			hooks = append(hooks, sites[name].DailySync)
@@ -97,6 +118,25 @@ func Wire(ctx context.Context, db *gorm.DB, app *fiber.App, background bool) Dep
 		indexer.Start(ctx, base.EnvDuration("CATALOG_INDEX_INTERVAL", 2*time.Minute))
 	}
 	return deps
+}
+
+// newCache connects to Redis (REDIS_ADDR, default the in-container
+// 127.0.0.1:6379). The API runs uncached when Redis is off or down.
+func newCache(ctx context.Context) *cache.Cache {
+	if !base.EnvBool("REDIS_ENABLED", true) {
+		slog.Info("cache: disabled (REDIS_ENABLED=false)")
+		return nil
+	}
+	addr := base.Env("REDIS_ADDR", cache.DefaultAddr)
+	c := cache.New(addr, "howwebiz:")
+	pctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	if err := c.Ping(pctx); err != nil {
+		slog.Warn("cache: redis not reachable yet, serving uncached until it is", "addr", addr, "err", err)
+	} else {
+		slog.Info("cache: redis connected", "addr", addr)
+	}
+	return c
 }
 
 // Wait blocks until every crawler has stopped (after ctx is cancelled).

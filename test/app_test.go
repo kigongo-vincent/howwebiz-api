@@ -92,7 +92,7 @@ func TestMain(m *testing.M) {
 		"DB_DRIVER": "sqlite", "DB_PATH": filepath.Join(dir, "test.db"), "DB_LOG": "silent",
 		"CRAWL_BASE_URL": srv.URL, "CRAWL_REQUEST_DELAY": "0s", "CRAWL_DETAIL_WORKERS": "4",
 		"CRAWL_TARGETS": "hot100,audio-new", "CRAWL_PAGES": "1", "CRAWL_DETAIL_MAX_PER_RUN": "0",
-		"CRON_ENABLED": "false", "API_KEY": "",
+		"CRON_ENABLED": "false", "API_KEY": "", "REDIS_ENABLED": "false",
 		"GOOGLE_CSE_KEY": "test-key", "GOOGLE_CSE_ENDPOINT": google.URL,
 	} {
 		os.Setenv(k, v)

@@ -2,12 +2,18 @@ package catalog
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"errors"
-	"github.com/kigongo-vincent/howwebiz-api/modules/base"
+	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/kigongo-vincent/howwebiz-api/modules/base"
+	"github.com/kigongo-vincent/howwebiz-api/modules/cache"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -48,6 +54,7 @@ type Result struct {
 	Live  []ProviderSearch
 	// Ingested is what the live searches added to the catalog.
 	Ingested IngestStats
+	Cached   bool // served from Redis
 }
 
 // Searcher service: local catalog search + live fan-out to providers.
@@ -58,8 +65,69 @@ type SearchService struct {
 	Timeout   time.Duration // per provider
 	CacheTTL  time.Duration // per (provider, query)
 
+	// Redis (optional): whole results for ResultTTL, totals for CountTTL.
+	// Totals are the expensive part of a broad query and change slowly, so
+	// they outlive the pages; Bump (reindex, cleanup) drops both at once.
+	Cache     *cache.Cache
+	ResultTTL time.Duration
+	CountTTL  time.Duration
+
+	// textIndexed: every row has search_text, so text queries use its
+	// trigram index (until then, the original per-column match).
+	textIndexed atomic.Bool
+
 	mu    sync.Mutex
 	cache map[string]time.Time // provider|query → when it was last fetched
+}
+
+const cacheNS = "catalog"
+
+// Bump drops every cached result and total (after bulk changes).
+func (s *SearchService) Bump(ctx context.Context) { s.Cache.Bump(ctx, cacheNS) }
+
+// PrepareSearchText fills search_text for rows stored before the column
+// existed, in batches, then switches text queries to its index. Cheap when
+// there is nothing to do; safe to run while the API serves.
+func (s *SearchService) PrepareSearchText(ctx context.Context) error {
+	const batch = 1000
+	var after uint
+	filled := 0
+	for ctx.Err() == nil {
+		var rows []Song
+		if err := s.DB.Select("id", "key", "title", "artist", "featured").
+			Where("search_text = '' AND id > ?", after).Order("id").Limit(batch).Find(&rows).Error; err != nil {
+			return err
+		}
+		if len(rows) == 0 {
+			s.textIndexed.Store(true)
+			if filled > 0 {
+				slog.Info("catalog: search index ready", "backfilled", filled)
+			}
+			return nil
+		}
+		var sql strings.Builder
+		args := make([]any, 0, 2*len(rows)+1)
+		ids := make([]uint, len(rows))
+		sql.WriteString("UPDATE catalog_songs SET search_text = CASE id")
+		for i, r := range rows {
+			sql.WriteString(" WHEN ? THEN ?")
+			args = append(args, r.ID, SearchText(r.Title, r.Artist, r.Featured, r.Key))
+			ids[i] = r.ID
+		}
+		sql.WriteString(" END WHERE id IN ?")
+		if err := s.DB.Exec(sql.String(), append(args, ids)...).Error; err != nil {
+			return err
+		}
+		filled += len(rows)
+		after = rows[len(rows)-1].ID
+	}
+	return ctx.Err()
+}
+
+// cacheKey is a stable digest of the parts of a query that shape a result.
+func cacheKey(parts ...any) string {
+	h := sha1.Sum([]byte(fmt.Sprintf("%q", parts)))
+	return hex.EncodeToString(h[:12])
 }
 
 func (s *SearchService) cached(key string) bool {
@@ -136,14 +204,39 @@ func likeEscape(s string) string {
 func (s *SearchService) Search(ctx context.Context, q Query) (Result, error) {
 	var res Result
 	text := strings.TrimSpace(q.Q)
+	folded := Fold(text)
+	limit := min(max(q.Limit, 1), 100)
+	page := max(q.Page, 1)
+
+	// Normalized filters: two spellings of one query share cache entries.
+	var hasAudio string
+	if q.HasAudio != nil {
+		hasAudio = fmt.Sprint(*q.HasAudio)
+	}
+	filters := []any{folded, Fold(q.Artist), strings.ToLower(q.Genre), q.Provider, hasAudio}
+	gen := s.Cache.Generation(ctx, cacheNS)
+	resultKey := "songs:" + gen + ":" + cacheKey(append(filters, q.Sort, page, limit)...)
+	countKey := "count:" + gen + ":" + cacheKey(filters...)
+
+	// A cached page answers at once, live provider search included: it
+	// already ran (and was ingested) when the page was cached. live=true
+	// always asks the providers again.
+	if q.Live != LiveOn && s.Cache.Get(ctx, resultKey, &res) {
+		res.Cached = true
+		return res, nil
+	}
 	if text != "" && (q.Live == LiveOn || (q.Live == LiveAuto && q.Page <= 1)) && len(s.Searchers) > 0 {
 		res.Live, res.Ingested = s.live(ctx, text)
 	}
 
 	db := s.DB.Model(&Song{})
-	folded := Fold(text)
 	for _, w := range strings.Fields(folded) {
 		like := "%" + likeEscape(w) + "%"
+		if s.textIndexed.Load() {
+			// one trigram-indexed column holding every searchable field, folded
+			db = db.Where(`search_text LIKE ? ESCAPE '\'`, like)
+			continue
+		}
 		// Match on the folded matching key plus display fields, so
 		// accents/punctuation never prevent a hit.
 		db = db.Where(`(key LIKE ? ESCAPE '\' OR LOWER(title) LIKE ? ESCAPE '\' OR LOWER(artist) LIKE ? ESCAPE '\' OR LOWER(CAST(featured AS TEXT)) LIKE ? ESCAPE '\')`,
@@ -165,8 +258,12 @@ func (s *SearchService) Search(ctx context.Context, q Query) (Result, error) {
 			db = db.Where("audio_url = ''")
 		}
 	}
-	if err := db.Count(&res.Total).Error; err != nil {
-		return res, err
+	// Live results just ingested may change the total: count afresh then.
+	if res.Ingested.NewSongs > 0 || !s.Cache.Get(ctx, countKey, &res.Total) {
+		if err := db.Session(&gorm.Session{}).Count(&res.Total).Error; err != nil {
+			return res, err
+		}
+		s.Cache.Set(ctx, countKey, res.Total, s.CountTTL)
 	}
 
 	sort := q.Sort
@@ -195,13 +292,18 @@ func (s *SearchService) Search(ctx context.Context, q Query) (Result, error) {
 	default: // recent
 		db = db.Order("first_seen_at DESC").Order("id DESC")
 	}
-	limit := min(max(q.Limit, 1), 100)
-	page := max(q.Page, 1)
-	err := db.Preload("Sources").Offset((page - 1) * limit).Limit(limit).Find(&res.Songs).Error
+	// Nothing past the last match: skip the query (deep pages are the
+	// costliest OFFSETs).
+	if int64((page-1)*limit) < res.Total {
+		if err := db.Preload("Sources").Offset((page - 1) * limit).Limit(limit).Find(&res.Songs).Error; err != nil {
+			return res, err
+		}
+	}
 	if res.Songs == nil {
 		res.Songs = []Song{}
 	}
-	return res, err
+	s.Cache.Set(ctx, resultKey, res, s.ResultTTL)
+	return res, nil
 }
 
 // Get returns one catalog entry with all its sources.

@@ -454,6 +454,7 @@ paths:
                         type: object
                         properties:
                           query: { type: string }
+                          cached: { type: boolean, description: "served from the result cache (up to CATALOG_RESULT_CACHE_TTL old; live=true bypasses it)" }
                           live: { type: array, items: { $ref: '#/components/schemas/ProviderSearch' } }
                           ingested: { $ref: '#/components/schemas/IngestStats' }
         '400': { $ref: '#/components/responses/BadRequest' }
