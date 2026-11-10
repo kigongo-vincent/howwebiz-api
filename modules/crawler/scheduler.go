@@ -9,14 +9,15 @@ import (
 	"github.com/kigongo-vincent/howwebiz-api/modules/base"
 )
 
+// At boot every source always crawls once (the same round as the daily
+// run); crawls resume, so restarts never redo finished work.
+//
 // Scheduler fires the default crawl once a day at CRON_AT (HH:MM, in
 // CRON_TZ). Env:
 //
 //	CRON_ENABLED=false   turn the daily crawl off
 //	CRON_AT=03:00        wall-clock time of the daily crawl
 //	CRON_TZ=Africa/Kampala
-//	CRAWL_ON_START=false skip the crawl at boot (default: at boot, every
-//	                     source crawls once, like the daily run)
 //	CATALOG_DAILY=false  skip the catalog step after the daily list crawl
 type Scheduler struct {
 	Engine       *Engine
@@ -31,12 +32,10 @@ type Scheduler struct {
 // StartScheduler launches the daily crawl loop if enabled and returns it
 // (nil when disabled). The loop stops when ctx is cancelled.
 func StartScheduler(ctx context.Context, e *Engine, hooks ...func()) *Scheduler {
-	if base.EnvBool("CRAWL_ON_START", true) {
-		// Every source at boot: the same round as the daily run (each
-		// source still honours its own <NAME>_DAILY switch and budgets).
-		slog.Info("crawler: startup crawl of every source")
-		go (&Scheduler{Engine: e, Hooks: hooks}).fire("startup")
-	}
+	// Every source at boot, always: the same round as the daily run (each
+	// source still honours its own <NAME>_DAILY switch and budgets).
+	slog.Info("crawler: startup crawl of every source")
+	go (&Scheduler{Engine: e, Hooks: hooks}).fire("startup")
 	if !base.EnvBool("CRON_ENABLED", true) {
 		slog.Info("crawler: daily schedule disabled")
 		return nil

@@ -1,6 +1,6 @@
 **HOWWEBIZ API**
 
-Crawls [howwe.ug](https://www.howwe.ug): the Hot 100 chart, the `/audio/*` listings, and the **entire song catalog** (~120k songs with mp3 links). It stores everything in Postgres and serves it as paginated JSON with search. Crawls run on demand through the API, once at startup for every source (`CRAWL_ON_START=false` to skip), and once a day from an internal scheduler.
+Crawls [howwe.ug](https://www.howwe.ug): the Hot 100 chart, the `/audio/*` listings, and the **entire song catalog** (~120k songs with mp3 links). It stores everything in Postgres and serves it as paginated JSON with search. Crawls run on demand through the API, always once at startup for every source, and once a day from an internal scheduler.
 
 Stack: Go · Fiber · GORM · Postgres (SQLite also supported for tests/quick local runs).
 
