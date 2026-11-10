@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/kigongo-vincent/howwebiz-api/modules/base"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -93,7 +94,7 @@ func (c *Client) get(ctx context.Context, path string, v any) error {
 		}
 		switch {
 		case resp.StatusCode == http.StatusOK:
-			err := json.NewDecoder(resp.Body).Decode(v)
+			err := json.NewDecoder(base.LimitBody(resp.Body)).Decode(v)
 			resp.Body.Close()
 			return err
 		case resp.StatusCode == http.StatusUnauthorized && !refreshed:
@@ -117,7 +118,7 @@ func (c *Client) get(ctx context.Context, path string, v any) error {
 			var e struct {
 				Message string `json:"message"`
 			}
-			_ = json.NewDecoder(resp.Body).Decode(&e)
+			_ = json.NewDecoder(base.LimitBody(resp.Body)).Decode(&e)
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusUnauthorized {
 				return errors.Join(ErrNotConnected, fmt.Errorf("audio.com rejected the token: %s", e.Message))

@@ -293,7 +293,7 @@ func (e *Engine) pool(ctx context.Context, ids []uint, fn func(id uint)) {
 	for range e.Cfg.DetailWorkers {
 		wg.Go(func() {
 			for id := range jobs {
-				fn(id)
+				_ = base.Safe(fmt.Sprintf("detail worker, song %d", id), func() { fn(id) })
 			}
 		})
 	}

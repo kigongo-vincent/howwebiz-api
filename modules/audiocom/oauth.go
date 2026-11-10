@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/kigongo-vincent/howwebiz-api/modules/base"
 	"net/http"
 	"net/url"
 	"strings"
@@ -240,10 +241,10 @@ func (o *OAuth) doJSON(req *http.Request, v any) error {
 			Description string `json:"error_description"`
 			Message     string `json:"message"`
 		}
-		_ = json.NewDecoder(resp.Body).Decode(&e)
+		_ = json.NewDecoder(base.LimitBody(resp.Body)).Decode(&e)
 		return fmt.Errorf("%s %s: %d %s%s%s", req.Method, req.URL.Path, resp.StatusCode, e.Error, e.Description, e.Message)
 	}
-	return json.NewDecoder(resp.Body).Decode(v)
+	return json.NewDecoder(base.LimitBody(resp.Body)).Decode(v)
 }
 
 func randomString(n int) string {

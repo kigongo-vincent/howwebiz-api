@@ -24,8 +24,15 @@ WORKDIR /root/
 # Copy the binary from builder
 COPY --from=builder /app/main .
 
-# Expose port
-EXPOSE 8080
+# Soft heap ceiling: the GC works harder before the container's hard
+# memory limit (set on docker run) is reached. Override per host if needed.
+ENV GOMEMLIMIT=700MiB
+
+EXPOSE 3000
+
+# Marks the container unhealthy when the API or its database stops answering
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+  CMD wget -qO- "http://127.0.0.1:${PORT:-3000}/api/v1/health" >/dev/null || exit 1
 
 # Run the binary
 CMD ["./main"]

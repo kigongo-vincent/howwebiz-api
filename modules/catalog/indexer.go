@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"context"
+	"github.com/kigongo-vincent/howwebiz-api/modules/base"
 	"log/slog"
 	"sync"
 	"time"
@@ -75,8 +76,9 @@ func (ix *Indexer) RunOnce(ctx context.Context) []IndexResult {
 
 // Start runs RunOnce every interval until ctx is cancelled.
 func (ix *Indexer) Start(ctx context.Context, interval time.Duration) {
+	pass := func() { _ = base.Safe("catalog indexer", func() { ix.RunOnce(ctx) }) }
 	go func() {
-		ix.RunOnce(ctx)
+		pass()
 		t := time.NewTicker(interval)
 		defer t.Stop()
 		for {
@@ -84,7 +86,7 @@ func (ix *Indexer) Start(ctx context.Context, interval time.Duration) {
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				ix.RunOnce(ctx)
+				pass()
 			}
 		}
 	}()

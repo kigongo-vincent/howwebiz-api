@@ -13,6 +13,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
+      # 0. Tests with the race detector: a data race in shared crawler code
+      #    crashed production, so nothing deploys unless this passes
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Test (race detector)
+        run: go test -race -count=1 ./...
+
       # 1. Create .env file from secret
       - name: Create .env file
         run: |
@@ -53,8 +63,14 @@ jobs:
             docker rm ${{ secrets.PROJECT_NAME }} || true
 
             # Run container with .env
+            #  --restart: come back after a crash or a host reboot
+            #  --memory:  a runaway can only kill this container, not the host
+            #  --log-opt: bounded logs, so they can't fill the disk
             docker run -d \
               --name ${{ secrets.PROJECT_NAME }} \
+              --restart unless-stopped \
+              --memory 1g --memory-swap 1g \
+              --log-driver json-file --log-opt max-size=20m --log-opt max-file=5 \
               --env-file .env \
               -p ${{ secrets.PORT }}:3000 \
               ${{ secrets.DOCKER_USERNAME }}/${{ secrets.PROJECT_NAME }}:latest

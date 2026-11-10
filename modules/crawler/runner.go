@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kigongo-vincent/howwebiz-api/modules/base"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
@@ -68,10 +69,12 @@ func (e *Runner) Launch(trigger, kind string, opts any, job func(ctx context.Con
 	}
 	e.running = run.ID
 	e.wg.Go(func() {
+		defer func() {
+			e.mu.Lock()
+			e.running = 0
+			e.mu.Unlock()
+		}()
 		e.execute(run, job)
-		e.mu.Lock()
-		e.running = 0
-		e.mu.Unlock()
 	})
 	return run, nil
 }
@@ -144,7 +147,11 @@ func (e *Runner) execute(run *CrawlRun, job func(ctx context.Context, st *RunSta
 		}
 	}()
 
-	job(ctx, st)
+	// A panic (e.g. a parser meeting markup it never saw) fails this run
+	// instead of killing the process and every other crawl with it.
+	if err := base.Safe(run.Kind+" crawl", func() { job(ctx, st) }); err != nil {
+		st.fail("%v", err)
+	}
 	close(done)
 	if ctx.Err() != nil {
 		st.fail("cancelled: %v", ctx.Err())

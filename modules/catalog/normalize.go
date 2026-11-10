@@ -3,6 +3,7 @@ package catalog
 import (
 	"regexp"
 	"strings"
+	"sync"
 	"unicode"
 	"unicode/utf8"
 
@@ -25,14 +26,22 @@ var (
 	// Separators between artist names: "A ft. B", "A x B", "A & B", "A, B".
 	artistSepRe = regexp.MustCompile(`(?i)\s*(?:\bft\b\.?|\bfeat\b\.?|\bfeaturing\b|\bx\b|&|,|\band\b|\bvs\.?\b|\bwith\b|/|\+)\s*`)
 	nonAlnumRe  = regexp.MustCompile(`[^\p{L}\p{N}]+`)
-	foldChain   = transform.Chain(norm.NFD, runes.Remove(runes.In(unicode.Mn)), norm.NFC)
+	// A transform.Chain is stateful and NOT safe for concurrent use: one
+	// shared chain crashed the process ("slice bounds out of range") once
+	// several provider crawls ingested at the same time. One per goroutine.
+	foldChains = sync.Pool{New: func() any {
+		return transform.Chain(norm.NFD, runes.Remove(runes.In(unicode.Mn)), norm.NFC)
+	}}
 )
 
 // Fold lowercases, removes accents and punctuation, and collapses spaces.
+// Safe for concurrent use.
 func Fold(s string) string {
-	if out, _, err := transform.String(foldChain, s); err == nil {
+	t := foldChains.Get().(transform.Transformer)
+	if out, _, err := transform.String(t, s); err == nil { // String resets t first
 		s = out
 	}
+	foldChains.Put(t)
 	s = strings.ReplaceAll(strings.ToLower(s), "&", " and ")
 	return strings.TrimSpace(nonAlnumRe.ReplaceAllString(s, " "))
 }

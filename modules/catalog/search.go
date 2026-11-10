@@ -3,6 +3,7 @@ package catalog
 import (
 	"context"
 	"errors"
+	"github.com/kigongo-vincent/howwebiz-api/modules/base"
 	"strings"
 	"sync"
 	"time"
@@ -97,7 +98,11 @@ func (s *SearchService) live(ctx context.Context, q string) ([]ProviderSearch, I
 			start := time.Now()
 			cctx, cancel := context.WithTimeout(ctx, s.Timeout)
 			defer cancel()
-			tracks, err := sr.Search(cctx, q, 50)
+			var tracks []Track
+			var err error
+			if perr := base.Safe("live search: "+sr.Name(), func() { tracks, err = sr.Search(cctx, q, 50) }); perr != nil {
+				tracks, err = nil, perr
+			}
 			ps := ProviderSearch{Provider: sr.Name(), Status: "ok", Results: len(tracks), TookMs: time.Since(start).Milliseconds()}
 			switch {
 			case errors.Is(err, ErrUnavailable):

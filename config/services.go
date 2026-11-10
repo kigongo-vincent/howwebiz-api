@@ -82,8 +82,13 @@ func SetupApplication() *fiber.App {
 	app := fiber.New(fiber.Config{
 		AppName:      "howwebiz-api",
 		ErrorHandler: errorHandler,
+		// Without these, slow or idle clients hold connections (and their
+		// buffers) forever. Writes allow for the live provider search.
+		ReadTimeout:  base.EnvDuration("HTTP_READ_TIMEOUT", 30*time.Second),
+		WriteTimeout: base.EnvDuration("HTTP_WRITE_TIMEOUT", 60*time.Second),
+		IdleTimeout:  base.EnvDuration("HTTP_IDLE_TIMEOUT", 120*time.Second),
 	})
-	app.Use(recover.New())
+	app.Use(recover.New(recover.Config{EnableStackTrace: true}))
 	app.Use(logger.New())
 	app.Use(cors.New())
 	// Read endpoints change only when a crawl writes, so clients that send

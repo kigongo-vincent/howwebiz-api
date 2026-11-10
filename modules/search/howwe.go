@@ -107,7 +107,7 @@ func (h *HowweSearch) Search(ctx context.Context, q string, page int) (res Resul
 			Message string `json:"message"`
 		} `json:"error"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+	if err := json.NewDecoder(base.LimitBody(resp.Body)).Decode(&body); err != nil {
 		return res, false, fmt.Errorf("google search: decode: %w", err)
 	}
 	if body.Error != nil || resp.StatusCode != http.StatusOK {
