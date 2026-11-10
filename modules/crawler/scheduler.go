@@ -15,7 +15,8 @@ import (
 //	CRON_ENABLED=false   turn the daily crawl off
 //	CRON_AT=03:00        wall-clock time of the daily crawl
 //	CRON_TZ=Africa/Kampala
-//	CRAWL_ON_START=true  also crawl once at boot
+//	CRAWL_ON_START=false skip the crawl at boot (default: at boot, every
+//	                     source crawls once, like the daily run)
 //	CATALOG_DAILY=false  skip the catalog step after the daily list crawl
 type Scheduler struct {
 	Engine       *Engine
@@ -30,10 +31,11 @@ type Scheduler struct {
 // StartScheduler launches the daily crawl loop if enabled and returns it
 // (nil when disabled). The loop stops when ctx is cancelled.
 func StartScheduler(ctx context.Context, e *Engine, hooks ...func()) *Scheduler {
-	if base.EnvBool("CRAWL_ON_START", false) {
-		if _, err := e.Start("startup", e.Cfg.Defaults); err != nil {
-			slog.Warn("startup crawl not started", "err", err)
-		}
+	if base.EnvBool("CRAWL_ON_START", true) {
+		// Every source at boot: the same round as the daily run (each
+		// source still honours its own <NAME>_DAILY switch and budgets).
+		slog.Info("crawler: startup crawl of every source")
+		go (&Scheduler{Engine: e, Hooks: hooks}).fire("startup")
 	}
 	if !base.EnvBool("CRON_ENABLED", true) {
 		slog.Info("crawler: daily schedule disabled")
@@ -84,12 +86,14 @@ func (s *Scheduler) loop(ctx context.Context) {
 			t.Stop()
 			return
 		case <-t.C:
-			s.fire()
+			s.fire("cron")
 		}
 	}
 }
 
-func (s *Scheduler) fire() {
+// fire runs one round: every source's job, then the howwe list crawl and
+// the catalog step.
+func (s *Scheduler) fire(trigger string) {
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("crawler: scheduled crawl panicked", "panic", r)
@@ -105,15 +109,15 @@ func (s *Scheduler) fire() {
 			h()
 		}()
 	}
-	if _, err := s.Engine.Start("cron", s.Engine.Cfg.Defaults); err != nil {
-		slog.Warn("crawler: scheduled crawl not started", "err", err)
+	if _, err := s.Engine.Start(trigger, s.Engine.Cfg.Defaults); err != nil {
+		slog.Warn("crawler: scheduled crawl not started", "trigger", trigger, "err", err)
 		return
 	}
 	// Then advance the full catalog (resumable, bounded by CATALOG_*).
 	if base.EnvBool("CATALOG_DAILY", true) {
 		s.Engine.Wait()
-		if _, err := s.Engine.StartCatalog("cron", CatalogDefaultsFromEnv()); err != nil {
-			slog.Warn("crawler: scheduled catalog crawl not started", "err", err)
+		if _, err := s.Engine.StartCatalog(trigger, CatalogDefaultsFromEnv()); err != nil {
+			slog.Warn("crawler: scheduled catalog crawl not started", "trigger", trigger, "err", err)
 		}
 	}
 }

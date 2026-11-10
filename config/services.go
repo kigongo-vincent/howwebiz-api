@@ -153,6 +153,7 @@ func ConnectDB() *gorm.DB {
 		&sitecrawl.Cursor{},
 		&sitecrawl.Probe{},
 		&sitecrawl.Page{},
+		&sitecrawl.FeedCursor{},
 	); err != nil {
 		log.Fatalf("failed to migrate application database: %v", err)
 	}

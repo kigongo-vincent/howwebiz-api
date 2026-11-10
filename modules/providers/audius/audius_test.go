@@ -1,0 +1,93 @@
+package audius
+
+import (
+	"context"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/kigongo-vincent/howwebiz-api/modules/providers/sitecrawl"
+)
+
+var site = Site{Base: "https://api.audius.co", AppName: "test", Genres: Genres}
+
+var (
+	_ sitecrawl.Site        = site
+	_ sitecrawl.Feeder      = site
+	_ sitecrawl.APISearcher = site
+)
+
+func fixture(t *testing.T, name string) []byte {
+	t.Helper()
+	b, err := os.ReadFile("testdata/" + name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+func TestParseFeed(t *testing.T) {
+	n, tracks, err := site.Parse(fixture(t, "feed_reggae.json"))
+	if err != nil || n != 3 || len(tracks) == 0 {
+		t.Fatalf("n=%d tracks=%d err=%v", n, len(tracks), err)
+	}
+	for _, tr := range tracks {
+		if tr.Provider != Name || tr.ExternalID == "" || tr.Title == "" || tr.Artist == "" || tr.DurationMs == 0 {
+			t.Errorf("incomplete track %+v", tr)
+		}
+		// A stable full-track URL, not a signed (expiring) node URL.
+		if tr.AudioURL != "https://api.audius.co/v1/tracks/"+tr.ExternalID+"/stream?app_name=test" {
+			t.Errorf("audio url %q", tr.AudioURL)
+		}
+		if !strings.HasPrefix(tr.PageURL, "https://audius.co/") || tr.ReleasedAt == nil || tr.Plays == nil {
+			t.Errorf("page/release/plays missing: %+v", tr)
+		}
+	}
+}
+
+// Gated tracks only give a preview to anonymous listeners: never stored.
+func TestSkipsStreamGated(t *testing.T) {
+	n, tracks, err := site.Parse(fixture(t, "feed_gated.json"))
+	if err != nil || n != 2 || len(tracks) != 1 || tracks[0].ExternalID != "EvMobj4" {
+		t.Fatalf("n=%d tracks=%+v err=%v", n, tracks, err)
+	}
+}
+
+func TestFeedPaging(t *testing.T) {
+	var paths []string
+	get := func(_ context.Context, p string) ([]byte, error) {
+		paths = append(paths, p)
+		return fixture(t, "feed_reggae.json"), nil // 3 < page size → end of feed
+	}
+	tracks, next, done, err := site.FeedPage(context.Background(), get, "Reggae", "200")
+	if err != nil || !done || next != "300" || len(tracks) == 0 {
+		t.Fatalf("next=%q done=%v n=%d err=%v", next, done, len(tracks), err)
+	}
+	if !strings.Contains(paths[0], "genre=Reggae") || !strings.Contains(paths[0], "offset=200") || !strings.Contains(paths[0], "sort_method=recent") {
+		t.Errorf("path %q", paths[0])
+	}
+	_, _, _, _ = site.FeedPage(context.Background(), get, "all", "")
+	if strings.Contains(paths[1], "genre=") {
+		t.Errorf("all feed must not filter by genre: %q", paths[1])
+	}
+	// The search index stops at 10k: the last page ends the feed.
+	full := func(_ context.Context, p string) ([]byte, error) {
+		return []byte(`{"data":[` + strings.Repeat(`{"id":"x","title":"t"},`, 99) + `{"id":"y","title":"t"}]}`), nil
+	}
+	if _, _, done, _ := site.FeedPage(context.Background(), full, "all", "9900"); !done {
+		t.Error("offset 9900 is the last page under the 10k window: want done")
+	}
+	if _, _, done, _ := site.FeedPage(context.Background(), full, "all", "0"); done {
+		t.Error("a full first page is not the end")
+	}
+}
+
+func TestVerifiedOnly(t *testing.T) {
+	strict := site
+	strict.VerifiedOnly = true
+	_, all, _ := site.Parse(fixture(t, "feed_reggae.json"))
+	_, verified, _ := strict.Parse(fixture(t, "feed_reggae.json"))
+	if len(verified) != 0 || len(all) == 0 { // the fixture's uploaders are unverified
+		t.Fatalf("verified=%d all=%d", len(verified), len(all))
+	}
+}

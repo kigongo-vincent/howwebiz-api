@@ -11,6 +11,9 @@ import (
 	"github.com/kigongo-vincent/howwebiz-api/modules/catalog"
 	"github.com/kigongo-vincent/howwebiz-api/modules/crawler"
 	"github.com/kigongo-vincent/howwebiz-api/modules/momuziki"
+	"github.com/kigongo-vincent/howwebiz-api/modules/providers/audius"
+	"github.com/kigongo-vincent/howwebiz-api/modules/providers/internetarchive"
+	"github.com/kigongo-vincent/howwebiz-api/modules/providers/jamendo"
 	"github.com/kigongo-vincent/howwebiz-api/modules/providers/pearltunes"
 	"github.com/kigongo-vincent/howwebiz-api/modules/providers/sitecrawl"
 	"github.com/kigongo-vincent/howwebiz-api/modules/providers/ugamusic"
@@ -28,13 +31,26 @@ func Wire(ctx context.Context, db *gorm.DB, app *fiber.App, background bool) Dep
 	mom := momuziki.NewService(ctx, db, momuziki.ConfigFromEnv())
 
 	ingester := &catalog.Ingester{DB: db,
-		Priority: base.EnvList("CATALOG_PROVIDER_PRIORITY", []string{"howwe", "ugamusic", "pearltunes", "momuziki", "audiocom"})}
+		Priority: base.EnvList("CATALOG_PROVIDER_PRIORITY", []string{"howwe", "ugamusic", "pearltunes", "momuziki", "audiocom", "audius", "jamendo", "internetarchive"})}
 
 	ptCfg := sitecrawl.ConfigFromEnv("PEARLTUNES", "https://pearltunes.com")
 	ugCfg := sitecrawl.ConfigFromEnv("UGAMUSIC", "https://ugamusic.net")
+	// Full-track APIs with worldwide catalogs (see README "Sources researched").
+	auCfg := sitecrawl.ConfigFromEnv("AUDIUS", "https://api.audius.co")
+	jaCfg := sitecrawl.ConfigFromEnv("JAMENDO", "https://api.jamendo.com")
+	iaCfg := sitecrawl.ConfigFromEnv("INTERNETARCHIVE", "https://archive.org")
+	// archive.org feeds cost one /metadata request per item: a daily page budget keeps the load modest.
+	iaCfg.Defaults.MaxPages = base.EnvInt("INTERNETARCHIVE_MAX_PAGES", 200)
 	sites := sitecrawl.Registry{
 		pearltunes.Name: sitecrawl.New(ctx, db, pearltunes.Site{Base: ptCfg.Web.BaseURL}, ptCfg, ingester),
 		ugamusic.Name:   sitecrawl.New(ctx, db, ugamusic.Site{Base: ugCfg.Web.BaseURL}, ugCfg, ingester),
+		audius.Name: sitecrawl.New(ctx, db, audius.Site{Base: auCfg.Web.BaseURL,
+			AppName: base.Env("AUDIUS_APP_NAME", "howwebiz"), Genres: base.EnvList("AUDIUS_GENRES", audius.Genres),
+			VerifiedOnly: base.EnvBool("AUDIUS_VERIFIED_ONLY", false)}, auCfg, ingester),
+		jamendo.Name: sitecrawl.New(ctx, db, jamendo.Site{Base: jaCfg.Web.BaseURL, ClientID: base.Env("JAMENDO_CLIENT_ID", "")}, jaCfg, ingester),
+		internetarchive.Name: sitecrawl.New(ctx, db, internetarchive.Site{Base: iaCfg.Web.BaseURL,
+			Collections: base.EnvList("INTERNETARCHIVE_COLLECTIONS", internetarchive.DefaultCollections),
+			Items:       base.EnvInt("INTERNETARCHIVE_ITEMS_PER_PAGE", 25)}, iaCfg, ingester),
 	}
 
 	// Ports: providers with their own store are indexed; every provider
@@ -51,7 +67,9 @@ func Wire(ctx context.Context, db *gorm.DB, app *fiber.App, background bool) Dep
 			Description: "audio.com — official API once connected, website pages behind the block counter"},
 	}
 	for _, name := range sites.Names() {
-		if _, ok := sites[name].Site.(sitecrawl.Searchable); ok {
+		_, html := sites[name].Site.(sitecrawl.Searchable)
+		_, api := sites[name].Site.(sitecrawl.APISearcher)
+		if html || api {
 			searchers = append(searchers, sites[name])
 		}
 		providers = append(providers, sites[name].Site.Info())

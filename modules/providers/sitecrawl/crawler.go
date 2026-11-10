@@ -21,7 +21,7 @@ import (
 const KindPrefix = "site:" // CrawlRun.Kind = "site:<name>"
 
 type Options struct {
-	MaxPages  int  `json:"maxPages"`  // listing pages; 0 = unlimited
+	MaxPages  int  `json:"maxPages"`  // listing + API feed pages; 0 = unlimited
 	MaxProbes int  `json:"maxProbes"` // song pages by id; 0 = unlimited
 	Refresh   bool `json:"refresh"`   // start a full listing re-walk now (once synced)
 	Reset     bool `json:"reset"`
@@ -145,6 +145,9 @@ func (c *Crawler) Start(trigger string, opts Options) (*crawler.CrawlRun, error)
 	if err := opts.Validate(); err != nil {
 		return nil, err
 	}
+	if !c.enabled() {
+		return nil, notConfigured(c.Site.Name())
+	}
 	if open, until := c.Web.CircuitOpen(); open {
 		return nil, fmt.Errorf("%w until %s", webguard.ErrCircuitOpen, until.Format(time.RFC3339))
 	}
@@ -157,7 +160,7 @@ func (c *Crawler) Start(trigger string, opts Options) (*crawler.CrawlRun, error)
 }
 
 func (c *Crawler) DailySync() {
-	if !c.Cfg.Daily {
+	if !c.Cfg.Daily || !c.enabled() {
 		return
 	}
 	if open, _ := c.Web.CircuitOpen(); open {
@@ -236,12 +239,20 @@ func (c *Crawler) run(ctx context.Context, opts Options, st *crawler.RunState) e
 		}
 	}
 
-	// 3. Song pages by id.
+	// 3. API feeds (resumable per feed). They share the page budget.
+	feeder, isFeeder := c.Site.(Feeder)
+	if isFeeder && ctx.Err() == nil {
+		if err := c.feedPass(ctx, feeder, opts.Reset, pages, st); err != nil {
+			return err
+		}
+	}
+
+	// 4. Song pages by id.
 	if prober && cur.Phase != PhaseListing && ctx.Err() == nil {
 		if err := c.sweep(ctx, &cur, probes, st); err != nil {
 			return err
 		}
-	} else if !prober && cur.Phase == PhaseSweep {
+	} else if !prober && cur.Phase == PhaseSweep && (!isFeeder || c.feedsSynced(feeder)) {
 		cur.Phase = PhaseSynced
 	}
 	now := time.Now().UTC()
@@ -471,6 +482,25 @@ func (c *Crawler) Name() string { return c.Site.Name() }
 
 // Search runs the site's own search page (if it has one).
 func (c *Crawler) Search(ctx context.Context, q string, limit int) ([]catalog.Track, error) {
+	if !c.enabled() {
+		return nil, catalog.ErrUnavailable
+	}
+	if as, ok := c.Site.(APISearcher); ok {
+		tracks, err := as.SearchAPI(ctx, c.Web.Get, strings.TrimSpace(q), limit)
+		if fatal(err) || errors.Is(err, webguard.ErrDisallowed) {
+			return nil, fmt.Errorf("%w: %v", catalog.ErrUnavailable, err)
+		}
+		if err != nil {
+			return nil, err
+		}
+		out := tracks[:0]
+		for _, t := range tracks { // playable songs only
+			if t.AudioURL != "" {
+				out = append(out, t)
+			}
+		}
+		return out[:min(len(out), limit)], nil
+	}
 	s, ok := c.Site.(Searchable)
 	if !ok {
 		return nil, catalog.ErrUnavailable

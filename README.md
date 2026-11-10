@@ -1,6 +1,6 @@
 **HOWWEBIZ API**
 
-Crawls [howwe.ug](https://www.howwe.ug): the Hot 100 chart, the `/audio/*` listings, and the **entire song catalog** (~120k songs with mp3 links). It stores everything in Postgres and serves it as paginated JSON with search. Crawls run on demand through the API and once a day from an internal scheduler.
+Crawls [howwe.ug](https://www.howwe.ug): the Hot 100 chart, the `/audio/*` listings, and the **entire song catalog** (~120k songs with mp3 links). It stores everything in Postgres and serves it as paginated JSON with search. Crawls run on demand through the API, once at startup for every source (`CRAWL_ON_START=false` to skip), and once a day from an internal scheduler.
 
 Stack: Go · Fiber · GORM · Postgres (SQLite also supported for tests/quick local runs).
 
@@ -41,10 +41,14 @@ modules/catalog/           domain + use cases: Track, Song/Source, matching (nor
                            Ingester (merge, sparse data never erases rich data), Indexer, SearchService,
                            ports: Store (provider has its own tables) and Searcher (live search)
 modules/providers/
-  sitecrawl/               generic HTML-site crawler (the momuziki pattern), driven by optional capabilities:
+  sitecrawl/               generic site/API crawler (the momuziki pattern), driven by optional capabilities:
                            Lister (newest-first pages) · Prober (song pages by id) · Sitemapper (lastmod) · Searchable
+                           · Feeder (API feeds with per-feed cursors) · APISearcher · Enabler (needs config, e.g. a key)
   pearltunes/              parsers only
   ugamusic/                parsers only
+  audius/                  API client only (Feeder + APISearcher)
+  jamendo/                 API client only (Feeder + APISearcher + Enabler)
+  internetarchive/         API client only (Feeder + APISearcher)
 modules/{song,search,momuziki,audiocom}/catalog_adapter.go   existing providers → catalog ports
 config/wiring.go           composition root (also used by tests)
 ```
@@ -52,6 +56,25 @@ config/wiring.go           composition root (also used by tests)
 For sites with song pages by id (pearltunes), the listing is discovery only, since its cards carry no mp3: page 1 gives the newest id and the sweep fetches song pages. Live search results without audio are enriched by fetching their song pages (`<NAME>_SEARCH_ENRICH`, default 5). Enrichment stops before the search deadline and returns what it has.
 
 Adding a site means writing a parser package that implements the capabilities its robots.txt allows, and adding it to `config/wiring.go`. Crawling, resuming, incremental sync, guards, ingest, live search and the shared endpoints (`/api/v1/providers/{name}/status|crawl|guard/reset`) come from `sitecrawl`.
+
+### Full-track APIs, worldwide (2026-11-10)
+
+These carry **full-length tracks**, not 30-second previews, from artists in every country. They go through the same `sitecrawl` crawler as a **Feeder**: each feed (a genre or a collection) has its own resumable cursor in `sitecrawl_feeds`, feeds take turns one page at a time (so a small `maxPages` still reaches every feed), and requests go through webguard (delay, 429/Retry-After, circuit breaker).
+
+| Provider | Catalog | Feeds | Key | Terms |
+|---|---|---|---|---|
+| **audius** ([audius.co](https://audius.co)) | open artist uploads, millions of tracks | newest first per genre (`AUDIUS_GENRES`, + `all`); the search index stops at 10k per feed, so later runs read from the top until a page adds nothing new | none (`AUDIUS_APP_NAME` is sent) | Audius-hosted, with its own takedown process. Stream-gated tracks (premium/follow-gated: preview only) are skipped. `AUDIUS_VERIFIED_ONLY=true` keeps verified artists only (~5–10% of uploads, fewer re-uploads of others' music) |
+| **jamendo** ([jamendo.com](https://www.jamendo.com)) | ~600k Creative Commons tracks by independent artists | every track by ascending id (tail feed: resumes at its end) | **`JAMENDO_CLIENT_ID`** (free, [devportal.jamendo.com](https://devportal.jamendo.com)). Disabled until set (`412` on crawl, `skipped` in live search) | API terms §3.3: free for **non-commercial** use, commercial use needs a licence from Jamendo; §4.1: credit the artist + Jamendo and link the track page (`pageUrl`). CC licence per track |
+| **internetarchive** ([archive.org](https://archive.org)) | `netlabels` (~80k releases) and `etree`, the Live Music Archive (~300k concerts) (`INTERNETARCHIVE_COLLECTIONS`) | per collection, oldest added first (tail feed; the watermark re-anchors before advancedsearch's 10k cap); one `/metadata` request per item, one track per mp3 | none | per-item licences (mostly CC for netlabels; etree artists allow non-commercial distribution). Live recordings get a "(Live)" suffix so they stay separate from studio versions. Daily budget `INTERNETARCHIVE_MAX_PAGES=200` pages × 25 items |
+
+`audioUrl` is always a stable full-track URL: `api.audius.co/v1/tracks/{id}/stream` (302 to a content node, Range supported), Jamendo's `audio` stream, `archive.org/download/{item}/{file}.mp3`.
+
+Not added: Spotify, Apple Music, Deezer and YouTube Music APIs give 30-second previews or no audio at all, and their terms forbid storing or redistributing audio. SoundCloud's API is closed to new apps. Free Music Archive has no public API any more. ccMixter is mostly remixes and stems. The `georgeblood`/`78rpm` (Great 78) collections are excluded because record labels have contested their copyright.
+
+```sh
+curl -X POST localhost:3000/api/v1/providers/audius/crawl -H 'Content-Type: application/json' -d '{"maxPages":50}'
+curl localhost:3000/api/v1/providers/audius/status   # feeds: cursor, walkDoneAt, pages, tracks per feed
+```
 
 ### Sites researched (2026-11-09)
 

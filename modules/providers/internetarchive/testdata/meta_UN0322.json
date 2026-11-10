@@ -1,0 +1,105 @@
+{
+ "metadata": {
+  "identifier": "UN0322",
+  "mediatype": "audio",
+  "collection": [
+   "unclassedmedia",
+   "netlabels"
+  ],
+  "creator": "serocell",
+  "date": "2026",
+  "subject": [
+   "screengaze",
+   "electronic",
+   "electronica",
+   "techno",
+   "ambient",
+   "experimental",
+   "eccentric"
+  ],
+  "title": "serocell - through a wire [2026]",
+  "addeddate": "2026-11-10 04:13:54"
+ },
+ "files": [
+  {
+   "name": "01_serocell=spring-wN_Hcc.wav",
+   "source": "original",
+   "format": "WAVE",
+   "length": "60.79"
+  },
+  {
+   "name": "02_serocell=plate-Si9idb.wav",
+   "source": "original",
+   "format": "WAVE",
+   "length": "58.79"
+  },
+  {
+   "name": "03_serocell=harp-U4Ang5.wav",
+   "source": "original",
+   "format": "WAVE",
+   "length": "68.2"
+  },
+  {
+   "name": "04_serocell=harp-zfPKkd.mp3",
+   "source": "derivative",
+   "creator": "serocell",
+   "title": "harp-zfPKkd",
+   "length": "01:01",
+   "format": "VBR MP3",
+   "original": "04_serocell=harp-zfPKkd.wav"
+  },
+  {
+   "name": "04_serocell=harp-zfPKkd.wav",
+   "source": "original",
+   "format": "WAVE",
+   "length": "60.96"
+  },
+  {
+   "name": "05_serocell=wire-m9TgCw.mp3",
+   "source": "derivative",
+   "creator": "serocell",
+   "title": "wire-m9TgCw",
+   "length": "01:04",
+   "format": "VBR MP3",
+   "original": "05_serocell=wire-m9TgCw.wav"
+  },
+  {
+   "name": "05_serocell=wire-m9TgCw.wav",
+   "source": "original",
+   "format": "WAVE",
+   "length": "63.63"
+  },
+  {
+   "name": "06_serocell=spring-uSjhkg.wav",
+   "source": "original",
+   "format": "WAVE",
+   "length": "62.2"
+  },
+  {
+   "name": "07_serocell=plate-ywrs3B.wav",
+   "source": "original",
+   "format": "WAVE",
+   "length": "60.09"
+  },
+  {
+   "name": "08_serocell=harp-IM_afy.wav",
+   "source": "original",
+   "format": "WAVE",
+   "length": "58.19"
+  },
+  {
+   "name": "09_serocell=harp-7gAy2O.wav",
+   "source": "original",
+   "format": "WAVE",
+   "length": "58.19"
+  },
+  {
+   "name": "10_serocell=harp-kQqol9.wav",
+   "source": "original",
+   "format": "WAVE",
+   "length": "60.96"
+  }
+ ],
+ "server": "ia601800.us.archive.org",
+ "dir": "/7/items/UN0322"
+}

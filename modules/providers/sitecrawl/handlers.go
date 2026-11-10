@@ -65,6 +65,19 @@ func statusHandler(c *fiber.Ctx, cr *Crawler) error {
 	_, prober := cr.Site.(Prober)
 	_, searchable := cr.Site.(Searchable)
 	_, sitemapper := cr.Site.(Sitemapper)
+	_, apiSearch := cr.Site.(APISearcher)
+	feeder, isFeeder := cr.Site.(Feeder)
+	var feeds []FeedCursor
+	if isFeeder {
+		stored := cr.feedCursors()
+		for _, name := range feeder.Feeds() {
+			fc, ok := stored[name]
+			if !ok {
+				fc = FeedCursor{Feed: name}
+			}
+			feeds = append(feeds, fc)
+		}
+	}
 	cur := cr.cursor()
 	var sitemap map[string]int64
 	if sitemapper {
@@ -73,9 +86,10 @@ func statusHandler(c *fiber.Ctx, cr *Crawler) error {
 	return c.JSON(base.APIResponse{Data: fiber.Map{
 		"provider": cr.Site.Info(), "cursor": cur, "complete": cur.Phase == PhaseSynced,
 		"songs": sources, "withAudio": withAudio, "highestId": cr.highestID(&cur),
-		"capabilities": fiber.Map{"listing": lister, "songPagesById": prober, "sitemap": sitemapper, "search": searchable},
-		"sitemap":      sitemap,
-		"running":      cr.Runner.Running() != 0, "lastRun": lastRun, "defaults": cr.Cfg.Defaults,
+		"capabilities": fiber.Map{"listing": lister, "songPagesById": prober, "sitemap": sitemapper,
+			"search": searchable || apiSearch, "feeds": isFeeder},
+		"enabled": cr.enabled(), "sitemap": sitemap, "feeds": feeds,
+		"running": cr.Runner.Running() != 0, "lastRun": lastRun, "defaults": cr.Cfg.Defaults,
 		"guard": fiber.Map{"paused": open, "pausedUntil": until, "health": h},
 	}})
 }
@@ -109,6 +123,8 @@ func crawlHandler(c *fiber.Ctx, cr *Crawler) error {
 	switch {
 	case errors.Is(err, crawler.ErrBusy):
 		return c.Status(fiber.StatusConflict).JSON(base.APIResponse{Message: err.Error(), Data: fiber.Map{"runId": run.ID}})
+	case errors.Is(err, ErrNotConfigured):
+		return base.API_FAIL(c, fiber.StatusPreconditionFailed, err.Error())
 	case errors.Is(err, webguard.ErrCircuitOpen):
 		return base.API_FAIL(c, fiber.StatusServiceUnavailable, err.Error())
 	case err != nil:

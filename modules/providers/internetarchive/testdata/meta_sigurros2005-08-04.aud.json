@@ -1,0 +1,119 @@
+{
+ "metadata": {
+  "identifier": "sigurros2005-08-04.aud",
+  "mediatype": "audio",
+  "collection": [
+   "SigurRosBand",
+   "etree"
+  ],
+  "creator": "Sigur Rós",
+  "date": "2005-08-04",
+  "subject": "Sigur Rós",
+  "title": "Sigur Rós Live at Enmore Theatre on 2005-08-04",
+  "addeddate": "2026-11-04 01:09:02"
+ },
+ "files": [
+  {
+   "name": "__ia_thumb.jpg",
+   "source": "original",
+   "format": "Item Tile"
+  },
+  {
+   "name": "sr2005-08-04d1t01.flac",
+   "source": "original",
+   "format": "Flac",
+   "length": "169.64",
+   "track": "01",
+   "title": "Intro",
+   "creator": "Sigur Rós",
+   "album": "Enmore Theatre 2005-08-04"
+  },
+  {
+   "name": "sr2005-08-04d1t01.mp3",
+   "source": "derivative",
+   "length": "02:50",
+   "format": "VBR MP3",
+   "original": "sr2005-08-04d1t01.flac"
+  },
+  {
+   "name": "sr2005-08-04d1t02.flac",
+   "source": "original",
+   "format": "Flac",
+   "length": "456.27",
+   "track": "02",
+   "title": "Glósóli",
+   "creator": "Sigur Rós",
+   "album": "Enmore Theatre 2005-08-04"
+  },
+  {
+   "name": "sr2005-08-04d1t02.mp3",
+   "source": "derivative",
+   "length": "07:36",
+   "format": "VBR MP3",
+   "original": "sr2005-08-04d1t02.flac"
+  },
+  {
+   "name": "sr2005-08-04d1t03.flac",
+   "source": "original",
+   "format": "Flac",
+   "length": "461.2",
+   "track": "03",
+   "title": "Ný Batterí",
+   "creator": "Sigur Rós",
+   "album": "Enmore Theatre 2005-08-04"
+  },
+  {
+   "name": "sr2005-08-04d1t03.mp3",
+   "source": "derivative",
+   "length": "07:41",
+   "format": "VBR MP3",
+   "original": "sr2005-08-04d1t03.flac"
+  },
+  {
+   "name": "sr2005-08-04d1t04.flac",
+   "source": "original",
+   "format": "Flac",
+   "length": "729.51",
+   "track": "04",
+   "title": "Svefn-g-englar",
+   "creator": "Sigur Rós",
+   "album": "Enmore Theatre 2005-08-04"
+  },
+  {
+   "name": "sr2005-08-04d1t04.mp3",
+   "source": "derivative",
+   "length": "12:10",
+   "format": "VBR MP3",
+   "original": "sr2005-08-04d1t04.flac"
+  },
+  {
+   "name": "sr2005-08-04d1t05.flac",
+   "source": "original",
+   "format": "Flac",
+   "length": "450.47",
+   "track": "05",
+   "title": "Sæglópur",
+   "creator": "Sigur Rós",
+   "album": "Enmore Theatre 2005-08-04"
+  },
+  {
+   "name": "sr2005-08-04d1t05.mp3",
+   "source": "derivative",
+   "length": "07:31",
+   "format": "VBR MP3",
+   "original": "sr2005-08-04d1t05.flac"
+  },
+  {
+   "name": "sr2005-08-04d1t06.flac",
+   "source": "original",
+   "format": "Flac",
+   "length": "604.55",
+   "track": "06",
+   "title": "Sé lest",
+   "creator": "Sigur Rós",
+   "album": "Enmore Theatre 2005-08-04"
+  }
+ ],
+ "server": "ia801600.us.archive.org",
+ "dir": "/13/items/sigurros2005-08-04.aud"
+}
