@@ -47,9 +47,43 @@ func Fold(s string) string {
 	return strings.TrimSpace(nonAlnumRe.ReplaceAllString(s, " "))
 }
 
+const (
+	KindSong = "song"
+	KindMix  = "mix"
+)
+
+// MixMinMs: a "song" this long is a DJ mix or nonstop (the longest
+// kadongo kamu epics run 10-15 minutes).
+const MixMinMs = 25 * 60 * 1000
+
+var (
+	// "Gospel Nonstop", "Kadongo Kamu Mixtape", "Megamix", "DJ Mix",
+	// "Ugandan Mixes 2024"; never "Remix"
+	mixWordRe = regexp.MustCompile(`(?i)\b(non[\s-]?stops?|mix[\s-]?tapes?|mega[\s-]?mix(es)?|dj[\s-]?mix(es)?|mixes)\b`)
+	// "Mix Vol 3", "Mix 2024", "Mix 12"; a song called "Love Mix" stays a song
+	mixVolRe = regexp.MustCompile(`(?i)\bmix\b\s*(vol(ume)?\.?\s*\d+|#?\d+)`)
+)
+
+// IsMix reports whether a track is a DJ mix / nonstop / mixtape rather
+// than a song: by its title, or a length no song has.
+func IsMix(title string, durationMs int) bool {
+	return durationMs >= MixMinMs || mixWordRe.MatchString(title) || mixVolRe.MatchString(title)
+}
+
+// KindOf is the track's kind: the provider's word, else IsMix.
+func KindOf(t Track) string {
+	switch {
+	case t.Kind != "":
+		return t.Kind
+	case IsMix(t.Title, t.DurationMs):
+		return KindMix
+	}
+	return KindSong
+}
+
 // SearchTextVersion changes whenever SearchText does; rows stored with an
 // older version are rewritten in the background (PrepareSearchText).
-const SearchTextVersion = 2
+const SearchTextVersion = 4 // 3: reclassifies kind (mixes); 4: doubled letters, title first
 
 // SearchText folds everything a text query may match — title, artist,
 // featured artists and the match key — into one string. Queries are folded
@@ -58,18 +92,39 @@ const SearchTextVersion = 2
 // Each multi-word field is also stored squashed: "Dole Y'omwana" folds to
 // "dole y omwana" and adds "doleyomwana", so a user typing "yomwana",
 // "y omwana" or "doleyomwana" finds it.
+//
+// Doubled letters are collapsed (SearchFold): Luganda spellings vary by them
+// ("omwaana"/"omwana", "Ssebatta"/"Sebata"), and queries collapse the same.
+//
+// The text starts with the squashed title, so "the title is exactly the
+// query" is a prefix match (TitleIs).
 func SearchText(title, artist string, featured []string, key string) string {
-	fields := append([]string{Fold(title), Fold(artist)}, Fold(strings.ReplaceAll(key, "|", " ")))
+	fields := append([]string{SearchFold(title), SearchFold(artist)}, SearchFold(strings.ReplaceAll(key, "|", " ")))
 	for _, f := range featured {
-		fields = append(fields, Fold(f))
+		fields = append(fields, SearchFold(f))
 	}
-	parts := slices.Clone(fields)
-	for _, f := range fields {
+	parts := []string{strings.ReplaceAll(fields[0], " ", "")}
+	parts = append(parts, fields...)
+	for _, f := range fields[1:] {
 		if strings.Contains(f, " ") {
 			parts = append(parts, strings.ReplaceAll(f, " ", ""))
 		}
 	}
-	return strings.Join(parts, " ")
+	return strings.Join(slices.DeleteFunc(parts, func(p string) bool { return p == "" }), " ")
+}
+
+// SearchFold is Fold with doubled letters collapsed: what search_text holds
+// and queries are matched as.
+func SearchFold(s string) string {
+	var b strings.Builder
+	var prev rune
+	for _, r := range Fold(s) {
+		if r != prev || r == ' ' || unicode.IsDigit(r) { // "2000" stays
+			b.WriteRune(r)
+		}
+		prev = r
+	}
+	return b.String()
 }
 
 // CleanTitle removes packaging noise and featured-artist credits from a

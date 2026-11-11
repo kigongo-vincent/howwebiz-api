@@ -42,8 +42,12 @@ func (in *Ingester) rank(provider string) int {
 }
 
 func trackHash(t Track) string {
-	return scraper.Fingerprint([]any{t.Title, t.Artist, t.Featured, t.AudioURL, t.CoverURL, t.PageURL,
-		t.DurationMs, t.Plays, t.Genre, t.ReleasedAt})
+	fields := []any{t.Title, t.Artist, t.Featured, t.AudioURL, t.CoverURL, t.PageURL,
+		t.DurationMs, t.Plays, t.Genre, t.ReleasedAt}
+	if t.Kind != "" { // only when the provider says: hashes stored before Kind stay valid
+		fields = append(fields, t.Kind)
+	}
+	return scraper.Fingerprint(fields)
 }
 
 // Ingest stores tracks (any providers, any size). Unchanged tracks cost
@@ -156,7 +160,7 @@ func (in *Ingester) ingestBatch(batch []Track, now time.Time) (IngestStats, erro
 			src := Source{SongID: songID, Provider: t.Provider, ExternalID: t.ExternalID,
 				Title: t.Title, Artist: t.Artist, AudioURL: t.AudioURL, CoverURL: t.CoverURL, PageURL: t.PageURL,
 				DurationMs: t.DurationMs, Plays: t.Plays, Genre: t.Genre, ReleasedAt: t.ReleasedAt,
-				Hash: hash, ProviderUpdatedAt: t.UpdatedAt, UpdatedAt: now}
+				Kind: KindOf(t), Hash: hash, ProviderUpdatedAt: t.UpdatedAt, UpdatedAt: now}
 			if had {
 				src.ID = old.ID
 				if err := tx.Save(&src).Error; err != nil {
@@ -288,6 +292,10 @@ func (in *Ingester) reaggregateChunk(tx *gorm.DB, ids []uint, now time.Time) err
 		upd["providers"] = datatypes.NewJSONSlice(providers)
 		upd["source_count"] = len(srcs)
 		upd["search_text"] = SearchText(first.Title, first.Artist, feat, s.Key)
+		upd["kind"] = srcs[0].Kind
+		if upd["kind"] == "" {
+			upd["kind"] = KindSong
+		}
 		upd["search_version"] = SearchTextVersion
 		if err := tx.Model(&Song{}).Where("id = ?", s.ID).Updates(upd).Error; err != nil {
 			return err

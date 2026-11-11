@@ -26,6 +26,7 @@ type Query struct {
 	Genre    string
 	Provider string // only songs available from this provider
 	HasAudio *bool
+	Type     string // song (default) | mix | all
 	Sort     string // relevance (default with q) | recent (default) | plays | title
 	Page     int
 	Limit    int
@@ -115,7 +116,7 @@ func (s *SearchService) PrepareSearchText(ctx context.Context) error {
 	filled := 0
 	for ctx.Err() == nil {
 		var rows []Song
-		if err := s.DB.Select("id", "key", "title", "artist", "featured").
+		if err := s.DB.Select("id", "key", "title", "artist", "featured", "duration_ms").
 			Where("(search_version < ? OR search_text = '') AND id > ?", SearchTextVersion, after).Order("id").Limit(batch).Find(&rows).Error; err != nil {
 			return err
 		}
@@ -138,6 +139,18 @@ func (s *SearchService) PrepareSearchText(ctx context.Context) error {
 		sql.WriteString(" END, search_version = ? WHERE id IN ?")
 		if err := s.DB.Exec(sql.String(), append(args, SearchTextVersion, ids)...).Error; err != nil {
 			return err
+		}
+		// mixes stored before kind existed
+		var mixes []uint
+		for _, r := range rows {
+			if IsMix(r.Title, r.DurationMs) {
+				mixes = append(mixes, r.ID)
+			}
+		}
+		if len(mixes) > 0 {
+			if err := s.DB.Model(&Song{}).Where("id IN ?", mixes).Update("kind", KindMix).Error; err != nil {
+				return err
+			}
 		}
 		filled += len(rows)
 		after = rows[len(rows)-1].ID
@@ -287,7 +300,11 @@ func (s *SearchService) Search(ctx context.Context, q Query) (Result, error) {
 	if q.HasAudio != nil {
 		hasAudio = fmt.Sprint(*q.HasAudio)
 	}
-	filters := []any{folded, Fold(q.Artist), strings.ToLower(q.Genre), q.Provider, hasAudio}
+	kind := q.Type
+	if kind == "" {
+		kind = KindSong
+	}
+	filters := []any{folded, Fold(q.Artist), strings.ToLower(q.Genre), q.Provider, hasAudio, kind}
 	gen := s.Cache.Generation(ctx, cacheNS)
 	resultKey := "songs:" + gen + ":" + cacheKey(append(filters, q.Sort, page, limit)...)
 	countKey := "count:" + gen + ":" + cacheKey(filters...)
@@ -303,7 +320,7 @@ func (s *SearchService) Search(ctx context.Context, q Query) (Result, error) {
 		res.Live, res.Ingested = s.live(ctx, text)
 	}
 
-	words := strings.Fields(folded)
+	words := strings.Fields(SearchFold(text))
 	// filters: everything but the text
 	db := s.DB.Model(&Song{})
 	if q.Artist != "" {
@@ -321,6 +338,9 @@ func (s *SearchService) Search(ctx context.Context, q Query) (Result, error) {
 		} else {
 			db = db.Where("audio_url = ''")
 		}
+	}
+	if kind != "all" {
+		db = db.Where("kind = ?", kind)
 	}
 
 	sort := q.Sort

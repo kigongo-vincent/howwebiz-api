@@ -58,11 +58,12 @@ func TestSearchFuzzyPostgres(t *testing.T) {
 	cases := []struct{ q, top, match string }{
 		{"dole yomwana", "Dole Y'omwana", "exact"},
 		{"Dole Y'omwana", "Dole Y'omwana", "exact"},
-		{"ssebatta", "Dole Y'omwana", "close"}, // typo in the artist
-		{"dole ssebatta", "Dole Y'omwana", "close"},
+		{"ssebatta", "Dole Y'omwana", "exact"}, // doubled letters collapse: "sebata"
+		{"dole ssebatta", "Dole Y'omwana", "exact"},
+		{"fameika", "Dole", "close"},            // misspelled artist (Fameica): typo match
 		{"nkwagla", "Nkwagala", "close"},        // missing letter
 		{"sitya los", "Sitya Loss", "exact"},    // "los" is in "loss"
-		{"kenzo sityaa", "Sitya Loss", "close"}, // doubled letter
+		{"kenzo sityaa", "Sitya Loss", "exact"}, // doubled letter collapses
 		{"nkwagla bby", "Nkwagala", "close"},    // a 3-letter fragment inside "chubby" ranks below the typo match
 	}
 	for _, c := range cases {
@@ -73,6 +74,11 @@ func TestSearchFuzzyPostgres(t *testing.T) {
 		if len(res.Songs) == 0 || res.Songs[0].Title != c.top || res.Match != c.match {
 			t.Errorf("%q: match=%q got %v, want %q first (%s)", c.q, res.Match, titles(res), c.top, c.match)
 		}
+	}
+	// precision over recall: a short word with a letter missing ("sebta",
+	// similarity 0.5) stays under pg_trgm's 0.6 threshold and matches nothing
+	if res, _ := svc.Search(context.Background(), Query{Q: "sebta", Limit: 10, Live: LiveOff}); len(res.Songs) != 0 {
+		t.Errorf("sebta: got %v", titles(res))
 	}
 	// a word nobody spelled like that, and nothing like it: nothing
 	if res, _ := svc.Search(context.Background(), Query{Q: "zzqxv", Limit: 10, Live: LiveOff}); len(res.Songs) != 0 {

@@ -32,11 +32,14 @@ type Service struct {
 
 var sorts = []string{"relevance", "recent", "plays", "title"}
 
+var types = []string{KindSong, KindMix, "all"}
+
 // List is the aggregated songs endpoint.
 //
 //	?q=         text (title, artist, featured artists; accent/punctuation-insensitive)
 //	?artist=    primary artist
 //	?genre=  ?provider=  ?hasAudio=
+//	?type=      song (default) | mix (DJ mixes, nonstops, mixtapes) | all
 //	?sort=      relevance (default with q) | recent | plays | title
 //	?live=      auto (default: page 1 of a text search also asks every provider live) | true | false
 //	?page= ?limit=
@@ -46,6 +49,10 @@ func (s *Service) List(c *fiber.Ctx) error {
 		Sort: c.Query("sort"), Page: p.Page, Limit: p.Limit, Live: LiveMode(c.Query("live", string(LiveAuto)))}
 	if q.Sort != "" && !slices.Contains(sorts, q.Sort) {
 		return base.API_ERROR(c, "sort must be one of: "+strings.Join(sorts, ", "))
+	}
+	q.Type = c.Query("type", KindSong)
+	if !slices.Contains(types, q.Type) {
+		return base.API_ERROR(c, "type must be one of: "+strings.Join(types, ", "))
 	}
 	if q.Live != LiveAuto && q.Live != LiveOn && q.Live != LiveOff {
 		return base.API_ERROR(c, "live must be auto, true or false")

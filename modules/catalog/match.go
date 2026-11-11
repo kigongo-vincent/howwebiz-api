@@ -160,6 +160,12 @@ func (m matcher) score() clause.Expr {
 			SQL:  "(CASE WHEN " + phrase.SQL + " OR " + squashed.SQL + " THEN 2.0 ELSE 0 END)",
 			Vars: append(phrase.Vars, squashed.Vars...)})
 	}
+	if m.indexed && len(m.words) > 0 {
+		// the title is exactly the query: search_text starts with the
+		// squashed title. "Dole Y'omwaana" beats "Gudi Gude & Dole Yomwana"
+		parts = append(parts, clause.Expr{SQL: `(CASE WHEN search_text LIKE ? ESCAPE '\' THEN 1.5 ELSE 0 END)`,
+			Vars: []any{likeEscape(strings.Join(m.words, "")) + " %"}})
+	}
 	return join(parts, " + ")
 }
 

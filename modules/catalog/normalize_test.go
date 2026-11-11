@@ -78,3 +78,22 @@ func TestCleanGenreAndClip(t *testing.T) {
 		t.Errorf("key has %d runes, column holds 400", len([]rune(got)))
 	}
 }
+
+func TestIsMix(t *testing.T) {
+	mixes := []string{"Gospel Nonstop Vol 3", "Super Classic Kadongo Kamu 80s, 90s & 00s MiXtape", "Ugandan Mixes 2024",
+		"Afrobeat Megamix", "DJ Mix - Kampala Nights", "Lugaba Non-Stop", "Club Bangers Mix Vol. 2", "Throwback Mix 2019", "Mix #12"}
+	songs := []string{"Nassanga (Remix)", "Love Mix", "Mixed Feelings", "Remixes", "Sitya Loss", "Dole Y'omwana", "Mixtures"}
+	for _, m := range mixes {
+		if !IsMix(m, 4*60*1000) {
+			t.Errorf("%q should be a mix", m)
+		}
+	}
+	for _, s := range songs {
+		if IsMix(s, 4*60*1000) {
+			t.Errorf("%q should be a song", s)
+		}
+	}
+	if !IsMix("Untitled", 40*60*1000) || IsMix("Walumbe Zaaya", 14*60*1000) {
+		t.Error("length: 40 min is a mix, a 14 min kadongo kamu epic is not")
+	}
+}

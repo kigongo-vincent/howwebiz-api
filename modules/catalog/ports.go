@@ -36,6 +36,9 @@ type Track struct {
 	Genre      string
 	ReleasedAt *time.Time
 	UpdatedAt  time.Time // provider-side change time (indexing watermark)
+	// Kind is KindMix when the provider marks it a DJ mix / nonstop; empty
+	// lets the catalog decide (IsMix: title and length).
+	Kind string
 }
 
 // Store is a provider whose tracks live in its own store.
