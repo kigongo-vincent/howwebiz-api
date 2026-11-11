@@ -288,6 +288,7 @@ func (in *Ingester) reaggregateChunk(tx *gorm.DB, ids []uint, now time.Time) err
 		upd["providers"] = datatypes.NewJSONSlice(providers)
 		upd["source_count"] = len(srcs)
 		upd["search_text"] = SearchText(first.Title, first.Artist, feat, s.Key)
+		upd["search_version"] = SearchTextVersion
 		if err := tx.Model(&Song{}).Where("id = ?", s.ID).Updates(upd).Error; err != nil {
 			return err
 		}
@@ -337,6 +338,18 @@ type PurgeStats struct {
 // Idempotent; cheap when there is nothing to do.
 func (in *Ingester) PurgeWithoutAudio(now time.Time) (PurgeStats, error) {
 	var st PurgeStats
+	// usually there's nothing to do (new data without audio is never stored):
+	// find that out with two cheap lookups that stop at the first hit, rather
+	// than counting the whole catalog and holding a transaction open over it
+	// on every start
+	var work bool
+	if err := in.DB.Raw(`SELECT EXISTS (SELECT 1 FROM catalog_sources WHERE TRIM(audio_url) = '')
+		OR EXISTS (SELECT 1 FROM catalog_songs WHERE TRIM(audio_url) = '')`).Scan(&work).Error; err != nil {
+		return st, err
+	}
+	if !work {
+		return st, nil
+	}
 	err := in.DB.Transaction(func(tx *gorm.DB) error {
 		var before, after int64
 		if err := tx.Model(&Song{}).Count(&before).Error; err != nil {

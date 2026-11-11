@@ -85,6 +85,7 @@ func Wire(ctx context.Context, db *gorm.DB, app *fiber.App, background bool) Dep
 		ResultTTL:     base.EnvDuration("CATALOG_RESULT_CACHE_TTL", 60*time.Second),
 		CountTTL:      base.EnvDuration("CATALOG_COUNT_CACHE_TTL", 5*time.Minute),
 		BackfillPause: base.EnvDuration("CATALOG_BACKFILL_PAUSE", 100*time.Millisecond)}
+	searchSvc.Fuzzy = trigramReady(db)
 	cat := &catalog.Service{DB: db, Ingester: ingester, Indexer: indexer, Providers: providers, Search: searchSvc}
 
 	deps := Dependencies{DB: db, App: app, Crawler: engine, AudioCom: audioCom, Momuziki: mom, Catalog: cat, Sites: sites, Cache: rc}
@@ -126,6 +127,20 @@ func Wire(ctx context.Context, db *gorm.DB, app *fiber.App, background bool) Dep
 		indexer.Start(ctx, base.EnvDuration("CATALOG_INDEX_INTERVAL", 2*time.Minute))
 	}
 	return deps
+}
+
+// trigramReady reports whether typo-tolerant search can run (Postgres
+// with pg_trgm, which search.Setup enables).
+func trigramReady(db *gorm.DB) bool {
+	if db.Dialector.Name() != "postgres" {
+		return false
+	}
+	var n int64
+	db.Raw(`SELECT COUNT(*) FROM pg_extension WHERE extname = 'pg_trgm'`).Scan(&n)
+	if n == 0 {
+		slog.Warn("catalog: pg_trgm missing, typo-tolerant search off")
+	}
+	return n > 0
 }
 
 // newCache connects to Redis (REDIS_ADDR, default the in-container

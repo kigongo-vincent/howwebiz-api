@@ -167,8 +167,12 @@ func TestSearchFansOutAndMerges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Total != 1 || res.Songs[0].SourceCount != 2 || len(res.Songs[0].Sources) != 2 {
-		t.Fatalf("want one merged entry, got total=%d %+v", res.Total, res.Songs)
+	// the merged song leads; the artist's other song follows (results blend)
+	if res.Match != "exact" || res.Songs[0].Title != "Sitya Loss" || res.Songs[0].SourceCount != 2 || len(res.Songs[0].Sources) != 2 {
+		t.Fatalf("want the merged entry first, got match=%q total=%d %+v", res.Match, res.Total, res.Songs)
+	}
+	if res.Total != 2 || res.Songs[1].Title != "Jubilation" {
+		t.Fatalf("want the artist's other song second, got total=%d", res.Total)
 	}
 	status := map[string]string{}
 	for _, l := range res.Live {
@@ -294,5 +298,36 @@ func TestPurgeWithoutAudio(t *testing.T) {
 	// Idempotent.
 	if st, _ := in.PurgeWithoutAudio(t0); st.SourcesRemoved != 0 || st.SongsRemoved != 0 {
 		t.Fatalf("second purge: %+v", st)
+	}
+}
+
+// "dole yomwana": no song holds both words, so the ones holding some of
+// them come back, the most words first, and the answer says it's loose
+func TestSearchLooseWhenNoSongHasEveryWord(t *testing.T) {
+	db := testDB(t)
+	in := &Ingester{DB: db, Priority: []string{"a"}}
+	in.Ingest([]Track{
+		{Provider: "a", ExternalID: "1", Title: "Dole", Artist: "Fik Fameica", AudioURL: "1"},
+		{Provider: "a", ExternalID: "2", Title: "Dole Dole Remix", Artist: "Someone", AudioURL: "2"},
+		{Provider: "a", ExternalID: "3", Title: "Sitya Loss", Artist: "Eddy Kenzo", AudioURL: "3"},
+	}, t0)
+	svc := &SearchService{DB: db, Ingester: in}
+	res, err := svc.Search(context.Background(), Query{Q: "dole yomwana", Page: 1, Limit: 10, Live: LiveOff})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Loose || res.Total != 2 || len(res.Songs) != 2 {
+		t.Fatalf("loose=%v total=%d songs=%d", res.Loose, res.Total, len(res.Songs))
+	}
+	// a query every word of which matches puts that song first and says
+	// so; the songs matching some words follow (results always blend)
+	res, _ = svc.Search(context.Background(), Query{Q: "dole fik", Page: 1, Limit: 10, Live: LiveOff})
+	if res.Loose || res.Match != "exact" || len(res.Songs) != 2 || res.Songs[0].Title != "Dole" {
+		t.Fatalf("exact first: loose=%v match=%q songs=%v", res.Loose, res.Match, res.Songs)
+	}
+	// an explicit order lists only songs holding every word
+	res, _ = svc.Search(context.Background(), Query{Q: "dole fik", Sort: "recent", Page: 1, Limit: 10, Live: LiveOff})
+	if len(res.Songs) != 1 || res.Songs[0].Title != "Dole" {
+		t.Fatalf("sorted: songs=%v", res.Songs)
 	}
 }

@@ -68,6 +68,12 @@ func (s *Service) List(c *fiber.Ctx) error {
 		s.orderSources(&res.Songs[i])
 	}
 	meta := fiber.Map{"query": q.Q, "cached": res.Cached}
+	if res.Match != "" {
+		meta["match"] = res.Match // exact: the first result holds every word; close: typos or some words
+	}
+	if res.Loose {
+		meta["loose"] = true // no song had every word: these have some, the most first
+	}
 	if res.Live != nil {
 		meta["live"] = res.Live
 		meta["ingested"] = res.Ingested

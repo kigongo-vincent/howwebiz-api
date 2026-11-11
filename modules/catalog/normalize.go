@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"unicode"
@@ -46,13 +47,27 @@ func Fold(s string) string {
 	return strings.TrimSpace(nonAlnumRe.ReplaceAllString(s, " "))
 }
 
+// SearchTextVersion changes whenever SearchText does; rows stored with an
+// older version are rewritten in the background (PrepareSearchText).
+const SearchTextVersion = 2
+
 // SearchText folds everything a text query may match — title, artist,
 // featured artists and the match key — into one string. Queries are folded
 // the same way, so accents and punctuation never prevent a hit.
+//
+// Each multi-word field is also stored squashed: "Dole Y'omwana" folds to
+// "dole y omwana" and adds "doleyomwana", so a user typing "yomwana",
+// "y omwana" or "doleyomwana" finds it.
 func SearchText(title, artist string, featured []string, key string) string {
-	parts := append([]string{Fold(title), Fold(artist)}, Fold(strings.ReplaceAll(key, "|", " ")))
+	fields := append([]string{Fold(title), Fold(artist)}, Fold(strings.ReplaceAll(key, "|", " ")))
 	for _, f := range featured {
-		parts = append(parts, Fold(f))
+		fields = append(fields, Fold(f))
+	}
+	parts := slices.Clone(fields)
+	for _, f := range fields {
+		if strings.Contains(f, " ") {
+			parts = append(parts, strings.ReplaceAll(f, " ", ""))
+		}
 	}
 	return strings.Join(parts, " ")
 }

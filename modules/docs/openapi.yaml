@@ -455,6 +455,15 @@ paths:
                         properties:
                           query: { type: string }
                           cached: { type: boolean, description: "served from the result cache (up to CATALOG_RESULT_CACHE_TTL old; live=true bypasses it)" }
+                          match:
+                            type: string
+                            enum: [exact, close]
+                            description: >-
+                              How close the first result is. exact: it holds every word as typed (apostrophes and spaces
+                              don't matter: "dole yomwana" finds "Dole Y'omwana"). close: typo or partial matches
+                              ("ssebatta" finds "Ssebata"). With sort=relevance (the default with q) results blend:
+                              exact matches first, then close ones. Other sorts list only songs matching every word.
+                          loose: { type: boolean, description: "true when match is close" }
                           live: { type: array, items: { $ref: '#/components/schemas/ProviderSearch' } }
                           ingested: { $ref: '#/components/schemas/IngestStats' }
         '400': { $ref: '#/components/responses/BadRequest' }

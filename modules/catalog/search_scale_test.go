@@ -72,7 +72,7 @@ func TestPrepareSearchTextBackfills(t *testing.T) {
 	}
 	var s Song
 	svc.DB.Where("title = ?", "Sitya Loss").First(&s)
-	if s.SearchText != "sitya loss eddy kenzo eddy kenzo sitya loss" {
+	if s.SearchText != "sitya loss eddy kenzo eddy kenzo sitya loss sityaloss eddykenzo eddykenzosityaloss" || s.SearchVersion != SearchTextVersion {
 		t.Fatalf("search_text = %q", s.SearchText)
 	}
 }
@@ -107,5 +107,32 @@ func TestSearchServesFromCache(t *testing.T) {
 	down, err := svc.Search(ctx, q)
 	if err != nil || down.Cached || down.Total != 2 {
 		t.Fatalf("redis down: cached=%v total=%d err=%v", down.Cached, down.Total, err)
+	}
+}
+
+// "dole yomwana" must find "Dole Y'omwana" first: the apostrophe splits the
+// stored word, the user types it joined.
+func TestSearchSquashedSpelling(t *testing.T) {
+	db := testDB(t)
+	in := &Ingester{DB: db, Priority: []string{"a"}}
+	if _, err := in.Ingest([]Track{
+		{Provider: "a", ExternalID: "1", Title: "Dole", Artist: "Fik Fameica", AudioURL: "1"},
+		{Provider: "a", ExternalID: "2", Title: "Dole Y'omwana", Artist: "Fred Ssebata", AudioURL: "2"},
+		{Provider: "a", ExternalID: "3", Title: "Omwana Wange", Artist: "Someone", AudioURL: "3"},
+	}, t0); err != nil {
+		t.Fatal(err)
+	}
+	svc := &SearchService{DB: db, Ingester: in}
+	if err := svc.PrepareSearchText(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{"dole yomwana", "Dole Y'omwana", "dole y omwana", "doleyomwana", "DOLE YOMWANA ssebata"} {
+		res, err := svc.Search(context.Background(), Query{Q: q, Limit: 10, Live: LiveOff})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(res.Songs) == 0 || res.Songs[0].Title != "Dole Y'omwana" || res.Match != "exact" {
+			t.Errorf("%q: match=%q got %v", q, res.Match, titles(res))
+		}
 	}
 }

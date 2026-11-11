@@ -15,19 +15,21 @@ type Song struct {
 	Artist string `json:"artist" gorm:"index"`
 	// SearchText is every searchable field folded into one string (see
 	// SearchText()), so a text query is one trigram-indexed LIKE per word.
-	SearchText  string                      `json:"-" gorm:"type:text;not null;default:''"`
-	Featured    datatypes.JSONSlice[string] `json:"featured"`
-	Genre       string                      `json:"genre" gorm:"size:64;index"`
-	CoverURL    string                      `json:"coverUrl"`
-	AudioURL    string                      `json:"audioUrl"` // best playable/downloadable source
-	DurationMs  int                         `json:"durationMs"`
-	Plays       int64                       `json:"plays"` // sum over providers that report plays
-	Providers   datatypes.JSONSlice[string] `json:"providers"`
-	SourceCount int                         `json:"sourceCount"`
-	ReleasedAt  *time.Time                  `json:"releasedAt"`
-	FirstSeenAt time.Time                   `json:"firstSeenAt" gorm:"index"`
-	UpdatedAt   time.Time                   `json:"updatedAt"`
-	Sources     []Source                    `json:"sources" gorm:"foreignKey:SongID"`
+	SearchText string `json:"-" gorm:"type:text;not null;default:''"`
+	// SearchVersion is the SearchTextVersion search_text was built with.
+	SearchVersion int16                       `json:"-" gorm:"not null;default:0"`
+	Featured      datatypes.JSONSlice[string] `json:"featured"`
+	Genre         string                      `json:"genre" gorm:"size:64;index"`
+	CoverURL      string                      `json:"coverUrl"`
+	AudioURL      string                      `json:"audioUrl"` // best playable/downloadable source
+	DurationMs    int                         `json:"durationMs"`
+	Plays         int64                       `json:"plays"` // sum over providers that report plays
+	Providers     datatypes.JSONSlice[string] `json:"providers"`
+	SourceCount   int                         `json:"sourceCount"`
+	ReleasedAt    *time.Time                  `json:"releasedAt"`
+	FirstSeenAt   time.Time                   `json:"firstSeenAt" gorm:"index"`
+	UpdatedAt     time.Time                   `json:"updatedAt"`
+	Sources       []Source                    `json:"sources" gorm:"foreignKey:SongID"`
 }
 
 func (Song) TableName() string { return "catalog_songs" }
