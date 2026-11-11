@@ -13,11 +13,15 @@ import (
 	"github.com/kigongo-vincent/howwebiz-api/modules/crawler"
 	"github.com/kigongo-vincent/howwebiz-api/modules/momuziki"
 	"github.com/kigongo-vincent/howwebiz-api/modules/providers/audius"
+	"github.com/kigongo-vincent/howwebiz-api/modules/providers/busoga"
 	"github.com/kigongo-vincent/howwebiz-api/modules/providers/internetarchive"
 	"github.com/kigongo-vincent/howwebiz-api/modules/providers/jamendo"
+	"github.com/kigongo-vincent/howwebiz-api/modules/providers/mdundo"
+	"github.com/kigongo-vincent/howwebiz-api/modules/providers/mzikii"
 	"github.com/kigongo-vincent/howwebiz-api/modules/providers/pearltunes"
 	"github.com/kigongo-vincent/howwebiz-api/modules/providers/sitecrawl"
 	"github.com/kigongo-vincent/howwebiz-api/modules/providers/ugamusic"
+	"github.com/kigongo-vincent/howwebiz-api/modules/providers/ugmuziki"
 	"github.com/kigongo-vincent/howwebiz-api/modules/search"
 	"github.com/kigongo-vincent/howwebiz-api/modules/song"
 	"gorm.io/gorm"
@@ -32,9 +36,15 @@ func Wire(ctx context.Context, db *gorm.DB, app *fiber.App, background bool) Dep
 	mom := momuziki.NewService(ctx, db, momuziki.ConfigFromEnv())
 
 	ingester := &catalog.Ingester{DB: db,
-		Priority: base.EnvList("CATALOG_PROVIDER_PRIORITY", []string{"howwe", "ugamusic", "pearltunes", "momuziki", "audiocom", "audius", "jamendo", "internetarchive"})}
+		Priority: base.EnvList("CATALOG_PROVIDER_PRIORITY", []string{"howwe", "ugamusic", "pearltunes", "mdundo", "momuziki",
+			"mzikii", "ugmuziki", "busoga", "audiocom", "audius", "jamendo", "internetarchive"})}
 
 	ptCfg := sitecrawl.ConfigFromEnv("PEARLTUNES", "https://pearltunes.com")
+	// More Ugandan / African sources (see each package's doc for what it reads).
+	mdCfg := sitecrawl.ConfigFromEnv("MDUNDO", "https://play.mdundo.com")
+	mzCfg := sitecrawl.ConfigFromEnv("MZIKII", "https://www.mzikii.com")
+	umCfg := sitecrawl.ConfigFromEnv("UGMUZIKI", "https://www.ugmuziki.com")
+	bsCfg := sitecrawl.ConfigFromEnv("BUSOGA", "https://www.busogamusicstore.com")
 	ugCfg := sitecrawl.ConfigFromEnv("UGAMUSIC", "https://ugamusic.net")
 	// Full-track APIs with worldwide catalogs (see README "Sources researched").
 	auCfg := sitecrawl.ConfigFromEnv("AUDIUS", "https://api.audius.co")
@@ -45,6 +55,12 @@ func Wire(ctx context.Context, db *gorm.DB, app *fiber.App, background bool) Dep
 	sites := sitecrawl.Registry{
 		pearltunes.Name: sitecrawl.New(ctx, db, pearltunes.Site{Base: ptCfg.Web.BaseURL}, ptCfg, ingester),
 		ugamusic.Name:   sitecrawl.New(ctx, db, ugamusic.Site{Base: ugCfg.Web.BaseURL}, ugCfg, ingester),
+		mdundo.Name: sitecrawl.New(ctx, db, mdundo.Site{Base: mdCfg.Web.BaseURL,
+			Feed: base.EnvList("MDUNDO_FEEDS", mdundo.DefaultFeeds)}, mdCfg, ingester),
+		mzikii.Name:   sitecrawl.New(ctx, db, mzikii.Site{Base: mzCfg.Web.BaseURL}, mzCfg, ingester),
+		ugmuziki.Name: sitecrawl.New(ctx, db, ugmuziki.Site{Base: umCfg.Web.BaseURL}, umCfg, ingester),
+		busoga.Name: sitecrawl.New(ctx, db, busoga.Site{Base: bsCfg.Web.BaseURL,
+			MaxSongs: base.EnvInt("BUSOGA_MAX_SONGS", busoga.MaxSongsPerFeed)}, bsCfg, ingester),
 		audius.Name: sitecrawl.New(ctx, db, audius.Site{Base: auCfg.Web.BaseURL,
 			AppName: base.Env("AUDIUS_APP_NAME", "howwebiz"), Genres: base.EnvList("AUDIUS_GENRES", audius.Genres),
 			VerifiedOnly: base.EnvBool("AUDIUS_VERIFIED_ONLY", false)}, auCfg, ingester),
