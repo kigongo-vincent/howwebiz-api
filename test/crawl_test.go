@@ -3,6 +3,7 @@ package test
 import (
 	"bytes"
 	"net/http"
+	"regexp"
 	"testing"
 	"time"
 
@@ -43,7 +44,12 @@ func TestCrawlCaching(t *testing.T) {
 	// --- run 3: a title changes on the chart → exactly one song rewritten,
 	// chart order unchanged so the snapshot is reused ---
 	orig := fixture("hot100.html")
-	Site.set("hot100", bytes.Replace(orig, []byte(">Nassanga (Remix)</span>"), []byte(">Nassanga (Remix) [Edit]</span>"), 1))
+	// whitespace-tolerant: the fixture is pretty-printed, so the title may wrap
+	edited := regexp.MustCompile(`>\s*Nassanga\s+\(Remix\)\s*</span>`).ReplaceAll(orig, []byte(">Nassanga (Remix) [Edit]</span>"))
+	if bytes.Equal(edited, orig) {
+		t.Fatal("run3: fixture no longer has the Nassanga (Remix) title to edit")
+	}
+	Site.set("hot100", edited)
 	r3 := crawl(t, opts).Stats.Data()
 	Site.set("hot100", orig)
 	if r3.SongsUpdated != 1 || r3.SongsInserted != 0 || r3.SnapshotsCreated != 0 {
