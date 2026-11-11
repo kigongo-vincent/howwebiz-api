@@ -145,9 +145,18 @@ func ConnectDB() *gorm.DB {
 	if err != nil {
 		log.Fatalf("failed to start application due to db connection failure: %v", err)
 	}
-	if base.Env("DB_DRIVER", "postgres") == "sqlite" {
-		sqlDB, _ := db.DB()
-		sqlDB.SetMaxOpenConns(1)
+	if sqlDB, err := db.DB(); err == nil {
+		if base.Env("DB_DRIVER", "postgres") == "sqlite" {
+			sqlDB.SetMaxOpenConns(1)
+		} else {
+			// a ceiling on connections: crawlers, ingest and the API together
+			// otherwise open as many as they like, and a small database (shared
+			// with other apps) spends its time switching between them. Past the
+			// ceiling, queries wait their turn in the app instead.
+			sqlDB.SetMaxOpenConns(base.EnvInt("DB_MAX_CONNS", 15))
+			sqlDB.SetMaxIdleConns(5)
+			sqlDB.SetConnMaxIdleTime(5 * time.Minute)
+		}
 	}
 
 	if err := migrate(db,
