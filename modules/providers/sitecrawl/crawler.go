@@ -444,7 +444,8 @@ func (c *Crawler) sweep(ctx context.Context, cur *Cursor, probes *budget, st *cr
 
 func (c *Crawler) probe(ctx context.Context, p Prober, id int, probes *budget, st *crawler.RunState) (found bool, err error) {
 	body, err := c.Web.Get(ctx, p.SongPath(id))
-	if err != nil {
+	missing := errors.Is(err, webguard.ErrNotFound) // 404/410: no song with this id (removed or never was)
+	if err != nil && !missing {
 		if fatal(err) {
 			return false, err
 		}
@@ -454,7 +455,12 @@ func (c *Crawler) probe(ctx context.Context, p Prober, id int, probes *budget, s
 	probes.take()
 	st.Add(func(x *crawler.Stats) { x.Probed++ })
 	now := time.Now().UTC()
-	tracks, err := p.ParseSong(body, id)
+	var tracks []catalog.Track
+	if missing {
+		err = ErrNotFound
+	} else {
+		tracks, err = p.ParseSong(body, id)
+	}
 	if errors.Is(err, ErrNotFound) {
 		return false, c.DB.Clauses(clause.OnConflict{UpdateAll: true}).Create(&Probe{Site: c.Site.Name(), ID: id, CheckedAt: now}).Error
 	}

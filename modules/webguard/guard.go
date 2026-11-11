@@ -270,7 +270,7 @@ func (w *Fetcher) Get(ctx context.Context, pathAndQuery string) ([]byte, error) 
 		case resp.StatusCode == http.StatusOK:
 			h.ConsecutiveBlocks, h.TotalOK, h.LastOKAt = 0, h.TotalOK+1, &now
 			return body, w.saveHealth(&h)
-		case resp.StatusCode == http.StatusNotFound:
+		case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone: // 410: removed for good
 			_ = w.saveHealth(&h)
 			return nil, fmt.Errorf("GET %s: %w", pathAndQuery, ErrNotFound)
 		default:
