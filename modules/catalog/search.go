@@ -124,11 +124,28 @@ func (s *SearchService) bg() *gorm.DB {
 }
 
 // RestoreIndexState switches text queries to the search_text index at
-// once when a previous run already found it filled (one Redis lookup, so
-// it can run on the boot path).
+// once when a previous run already filled it, so a restart never falls
+// back to the per-column scan (which made every search time out until the
+// upkeep got to it, minutes later). Redis remembers it, but Redis lives in
+// the container and a deploy empties it: Postgres is asked too. The trigram
+// index on search_text is only built once the backfill is done, so its
+// existence (and validity) is proof enough. Both checks are instant.
 func (s *SearchService) RestoreIndexState(ctx context.Context) {
 	if s.Cache.Exists(ctx, readyKey) {
 		s.textIndexed.Store(true)
+		return
+	}
+	if s.DB.Dialector.Name() != "postgres" {
+		return
+	}
+	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	var ready bool
+	err := s.bg().WithContext(cctx).Raw(`SELECT EXISTS (SELECT 1 FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid
+		WHERE c.relname = 'idx_catalog_songs_search_trgm' AND i.indisvalid)`).Scan(&ready).Error
+	if err == nil && ready {
+		s.markIndexed(ctx)
+		slog.Info("catalog: search index ready (found in the database)")
 	}
 }
 

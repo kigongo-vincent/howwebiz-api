@@ -86,3 +86,43 @@ func TestSearchFuzzyPostgres(t *testing.T) {
 		t.Errorf("zzqxv: got %v", titles(res))
 	}
 }
+
+// After a deploy Redis is empty: the search index must still be found
+// (from Postgres) before the first request, or every search scans.
+func TestRestoreIndexStatePostgres(t *testing.T) {
+	dsn := os.Getenv("TEST_POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("TEST_POSTGRES_DSN not set")
+	}
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: logger.Discard})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const schema = "catalog_restore_test"
+	db.Exec("DROP SCHEMA IF EXISTS " + schema + " CASCADE")
+	db.Exec("CREATE SCHEMA " + schema)
+	db.Exec("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+	t.Cleanup(func() { db.Exec("DROP SCHEMA IF EXISTS " + schema + " CASCADE") })
+	sqlDB, _ := db.DB()
+	sqlDB.SetMaxOpenConns(1)
+	if err := db.Exec("SET search_path TO " + schema + ", public").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&Song{}, &Source{}); err != nil {
+		t.Fatal(err)
+	}
+	db.Exec("DROP INDEX IF EXISTS public.idx_catalog_songs_search_trgm") // only this schema's counts
+	before := &SearchService{DB: db}
+	before.RestoreIndexState(context.Background())
+	if before.textIndexed.Load() {
+		t.Fatal("no index yet: must not claim the index is ready")
+	}
+	if err := db.Exec(`CREATE INDEX idx_catalog_songs_search_trgm ON catalog_songs USING gin (search_text gin_trgm_ops)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	after := &SearchService{DB: db} // no Redis: as after a deploy
+	after.RestoreIndexState(context.Background())
+	if !after.textIndexed.Load() {
+		t.Fatal("the index exists: search must use it from the first request")
+	}
+}
