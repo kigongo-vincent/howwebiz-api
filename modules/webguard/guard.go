@@ -94,6 +94,22 @@ type Fetcher struct {
 	robots    *scraper.Robots
 	robotsAt  time.Time
 	runBlocks int // blocks in the current run (reset by StartRun)
+
+	// SaveEvery: how often routine counters (requests, OKs) are written,
+	// and how stale the cached state may get (default 30s). Every request
+	// used to read and upsert web_health: two statements per page, each
+	// 0.3-0.7s on a busy database. Blocks and circuit trips are written at
+	// once; a re-read every SaveEvery picks up a reset made elsewhere.
+	SaveEvery time.Duration
+	cached    *Health
+	loadedAt  time.Time
+	savedAt   time.Time
+	// counters not written yet: applied as increments, so a flush never
+	// overwrites a block recorded meanwhile (by another fetcher or process).
+	// pendMu: Health() reads them while a request holds mu.
+	pendMu          sync.Mutex
+	pendReq, pendOK int
+	pendLastOK      *time.Time
 }
 
 func New(db *gorm.DB, name string, cfg Config) *Fetcher {
@@ -109,26 +125,137 @@ func New(db *gorm.DB, name string, cfg Config) *Fetcher {
 	}}
 }
 
+// Health is the guard's state: the stored row plus counters not written yet.
 func (w *Fetcher) Health() (Health, error) {
+	w.pendMu.Lock()
+	defer w.pendMu.Unlock()
+	h, err := w.load()
+	if err != nil {
+		return h, err
+	}
+	h.TotalRequests += w.pendReq
+	h.TotalOK += w.pendOK
+	if w.pendOK > 0 {
+		h.ConsecutiveBlocks, h.LastOKAt = 0, w.pendLastOK
+	}
+	return h, nil
+}
+
+// load reads the stored row.
+func (w *Fetcher) load() (Health, error) {
 	h := Health{Name: w.Name}
 	err := w.DB.Where("name = ?", w.Name).Limit(1).Find(&h).Error
 	return h, err
 }
 
+// saveHealth writes the whole row (pending counters must be flushed).
 func (w *Fetcher) saveHealth(h *Health) error {
 	h.Name, h.UpdatedAt = w.Name, time.Now().UTC()
-	return w.DB.Clauses(clause.OnConflict{UpdateAll: true}).Create(h).Error
+	if err := w.DB.Clauses(clause.OnConflict{UpdateAll: true}).Create(h).Error; err != nil {
+		return err
+	}
+	c := *h
+	w.cached, w.savedAt = &c, time.Now()
+	return nil
+}
+
+func (w *Fetcher) saveEvery() time.Duration {
+	if w.SaveEvery > 0 {
+		return w.SaveEvery
+	}
+	return 30 * time.Second
+}
+
+// state returns the guard state (w.mu held): cached, re-read from the
+// database every SaveEvery (pending counters written first).
+func (w *Fetcher) state() (Health, error) {
+	if w.cached != nil && time.Since(w.loadedAt) < w.saveEvery() {
+		return *w.cached, nil
+	}
+	return w.fresh()
+}
+
+// fresh writes pending counters and re-reads the row (w.mu held).
+func (w *Fetcher) fresh() (Health, error) {
+	if err := w.flush(); err != nil {
+		return Health{}, err
+	}
+	h, err := w.load()
+	if err != nil {
+		return Health{}, err
+	}
+	w.cached, w.loadedAt = &h, time.Now()
+	return h, nil
+}
+
+// note records a request that wasn't a block (w.mu held); counters are
+// written every SaveEvery.
+func (w *Fetcher) note(ok bool, now time.Time) error {
+	if w.cached == nil {
+		w.cached = &Health{Name: w.Name}
+	}
+	w.pendMu.Lock()
+	w.pendReq++
+	if ok {
+		w.pendOK++
+		w.pendLastOK = &now
+	}
+	w.pendMu.Unlock()
+	w.cached.TotalRequests++
+	if ok {
+		w.cached.TotalOK++
+		w.cached.ConsecutiveBlocks, w.cached.LastOKAt = 0, &now
+	}
+	if time.Since(w.savedAt) >= w.saveEvery() {
+		return w.flush()
+	}
+	return nil
+}
+
+// flush writes pending counters as increments (w.mu held).
+func (w *Fetcher) flush() error {
+	w.pendMu.Lock() // held across the write: Health() never counts twice
+	defer w.pendMu.Unlock()
+	if w.pendReq == 0 {
+		return nil
+	}
+	upd := map[string]any{
+		"total_requests": gorm.Expr("total_requests + ?", w.pendReq),
+		"total_ok":       gorm.Expr("total_ok + ?", w.pendOK),
+		"updated_at":     time.Now().UTC(),
+	}
+	if w.pendOK > 0 {
+		// a page loaded since: the blocks before it are no longer "in a row"
+		upd["consecutive_blocks"] = 0
+		upd["last_ok_at"] = w.pendLastOK
+	}
+	res := w.DB.Model(&Health{}).Where("name = ?", w.Name).Updates(upd)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 { // first run for this site: no row yet
+		h := *w.cached
+		w.pendReq, w.pendOK, w.pendLastOK = 0, 0, nil
+		return w.saveHealth(&h)
+	}
+	w.pendReq, w.pendOK, w.pendLastOK = 0, 0, nil
+	w.savedAt = time.Now()
+	return nil
 }
 
 // ResetCircuit clears the pause and the consecutive counter (operator action).
 func (w *Fetcher) ResetCircuit() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	h, err := w.Health()
+	if err := w.flush(); err != nil {
+		return err
+	}
+	h, err := w.load()
 	if err != nil {
 		return err
 	}
 	h.ConsecutiveBlocks, h.BlockedUntil = 0, nil
+	w.loadedAt = time.Now()
 	return w.saveHealth(&h)
 }
 
@@ -201,7 +328,7 @@ func (w *Fetcher) Get(ctx context.Context, pathAndQuery string) ([]byte, error) 
 	u := w.Cfg.BaseURL + pathAndQuery
 
 	for {
-		h, err := w.Health()
+		h, err := w.state()
 		if err != nil {
 			return nil, err
 		}
@@ -234,10 +361,14 @@ func (w *Fetcher) Get(ctx context.Context, pathAndQuery string) ([]byte, error) 
 		if err != nil {
 			return nil, fmt.Errorf("GET %s: %w", pathAndQuery, err)
 		}
-		h.TotalRequests++
 		now := time.Now().UTC()
 
 		if reason := blockReason(resp, body); reason != "" {
+			// a block is written at once, onto the row as it stands
+			if h, err = w.fresh(); err != nil {
+				return nil, err
+			}
+			h.TotalRequests++
 			w.runBlocks++
 			h.ConsecutiveBlocks++
 			h.TotalBlocks++
@@ -268,13 +399,12 @@ func (w *Fetcher) Get(ctx context.Context, pathAndQuery string) ([]byte, error) 
 
 		switch {
 		case resp.StatusCode == http.StatusOK:
-			h.ConsecutiveBlocks, h.TotalOK, h.LastOKAt = 0, h.TotalOK+1, &now
-			return body, w.saveHealth(&h)
+			return body, w.note(true, now)
 		case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone: // 410: removed for good
-			_ = w.saveHealth(&h)
+			_ = w.note(false, now)
 			return nil, fmt.Errorf("GET %s: %w", pathAndQuery, ErrNotFound)
 		default:
-			_ = w.saveHealth(&h)
+			_ = w.note(false, now)
 			return nil, fmt.Errorf("GET %s: status %d", pathAndQuery, resp.StatusCode)
 		}
 	}
