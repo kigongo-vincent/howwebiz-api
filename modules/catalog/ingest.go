@@ -54,21 +54,31 @@ func trackHash(t Track) string {
 // Ingest stores tracks (any providers, any size). Unchanged tracks cost
 // one read; changed ones are re-matched and their songs re-aggregated.
 func (in *Ingester) Ingest(tracks []Track, now time.Time) (IngestStats, error) {
+	st, _, err := in.ingest(tracks, now)
+	return st, err
+}
+
+// ingest is Ingest, also returning the songs it created (committed), as
+// the in-memory index holds them.
+func (in *Ingester) ingest(tracks []Track, now time.Time) (IngestStats, []memRow, error) {
 	var total IngestStats
+	var created []memRow
 	for start := 0; start < len(tracks); start += 300 {
-		st, err := in.ingestBatch(tracks[start:min(start+300, len(tracks))], now)
+		st, rows, err := in.ingestBatch(tracks[start:min(start+300, len(tracks))], now)
 		total.add(st)
+		created = append(created, rows...)
 		if err != nil {
-			return total, err
+			return total, created, err
 		}
 	}
-	return total, nil
+	return total, created, nil
 }
 
 type ref struct{ provider, id string }
 
-func (in *Ingester) ingestBatch(batch []Track, now time.Time) (IngestStats, error) {
+func (in *Ingester) ingestBatch(batch []Track, now time.Time) (IngestStats, []memRow, error) {
 	var st IngestStats
+	var newRows []memRow
 	// Dedupe within the batch (last wins).
 	byRef := map[ref]Track{}
 	var order []ref
@@ -88,7 +98,7 @@ func (in *Ingester) ingestBatch(batch []Track, now time.Time) (IngestStats, erro
 		byRef[r] = t
 	}
 	if len(order) == 0 {
-		return st, nil
+		return st, nil, nil
 	}
 
 	err := in.DB.Transaction(func(tx *gorm.DB) error {
@@ -130,7 +140,22 @@ func (in *Ingester) ingestBatch(batch []Track, now time.Time) (IngestStats, erro
 			songByKey[s.Key] = s.ID
 		}
 
-		touched := map[uint]bool{}
+		// Two passes, so a batch costs a few statements, not a few per
+		// track: on a database busy with crawling every statement takes
+		// 0.3-1.5s, and a live search of 50 new songs (4 statements each)
+		// held the request for over a minute. New songs are aggregated here,
+		// in Go, and inserted whole in one statement; their sources in
+		// another. Only songs that already existed are re-aggregated.
+		type step struct {
+			t    Track
+			old  Source
+			had  bool
+			hash string
+			key  string
+		}
+		var steps []step
+		newByKey := map[string][]Source{} // key -> sources of a song created by this batch
+		var newKeys []string
 		for _, r := range order {
 			t := byRef[r]
 			old, had := existing[r]
@@ -150,45 +175,136 @@ func (in *Ingester) ingestBatch(batch []Track, now time.Time) (IngestStats, erro
 				continue
 			}
 			key := ids[r].Key
-			songID, ok := songByKey[key]
-			if !ok {
-				// search_text from the start: a new song is searchable at once
-				// and never counts as "not indexed yet"
-				s := Song{Key: key, Title: ids[r].Title, Artist: ids[r].Artist, FirstSeenAt: now, UpdatedAt: now,
-					SearchText:    SearchText(ids[r].Title, ids[r].Artist, t.Featured, key),
-					SearchVersion: SearchTextVersion}
-				if err := tx.Create(&s).Error; err != nil {
-					return err
+			if _, ok := songByKey[key]; !ok {
+				if _, pending := newByKey[key]; !pending {
+					newKeys = append(newKeys, key)
+					newByKey[key] = nil
+					st.NewSongs++
+				} else if !had {
+					st.Attached++
 				}
-				songID, songByKey[key] = s.ID, s.ID
-				st.NewSongs++
 			} else if !had {
 				st.Attached++
 			}
-			src := Source{SongID: songID, Provider: t.Provider, ExternalID: t.ExternalID,
+			steps = append(steps, step{t: t, old: old, had: had, hash: hash, key: key})
+		}
+		source := func(sp step, songID uint) Source {
+			t := sp.t
+			return Source{SongID: songID, Provider: t.Provider, ExternalID: t.ExternalID,
 				Title: t.Title, Artist: t.Artist, AudioURL: t.AudioURL, CoverURL: t.CoverURL, PageURL: t.PageURL,
 				DurationMs: t.DurationMs, Plays: t.Plays, Genre: t.Genre, ReleasedAt: t.ReleasedAt,
-				Kind: KindOf(t), Hash: hash, ProviderUpdatedAt: t.UpdatedAt, UpdatedAt: now}
-			if had {
-				src.ID = old.ID
+				Kind: KindOf(t), Hash: sp.hash, ProviderUpdatedAt: t.UpdatedAt, UpdatedAt: now}
+		}
+		if len(newKeys) > 0 {
+			for _, sp := range steps {
+				if _, isNew := newByKey[sp.key]; isNew {
+					newByKey[sp.key] = append(newByKey[sp.key], source(sp, 0))
+				}
+			}
+			songs := make([]Song, 0, len(newKeys))
+			for _, key := range newKeys {
+				// search_text from the start: a new song is searchable at once
+				// and never counts as "not indexed yet"
+				s := in.aggregate(key, newByKey[key], now)
+				s.Key, s.FirstSeenAt = key, now
+				songs = append(songs, s)
+			}
+			if err := tx.CreateInBatches(&songs, 200).Error; err != nil {
+				return err
+			}
+			for _, s := range songs {
+				songByKey[s.Key] = s.ID
+				newRows = append(newRows, memRow{ID: uint32(s.ID), SearchText: s.SearchText, Plays: s.Plays,
+					Kind: s.Kind, HasAudio: s.AudioURL != ""})
+			}
+		}
+
+		touched := map[uint]bool{}
+		var created []Source
+		for _, sp := range steps {
+			songID := songByKey[sp.key]
+			_, isNew := newByKey[sp.key]
+			src := source(sp, songID)
+			if sp.had {
+				src.ID = sp.old.ID
 				if err := tx.Save(&src).Error; err != nil {
 					return err
 				}
-				if old.SongID != songID {
-					touched[old.SongID] = true // re-keyed: the old entry may be empty now
+				if sp.old.SongID != songID {
+					touched[sp.old.SongID] = true // re-keyed: the old entry may be empty now
 				}
 				st.Updated++
 			} else {
-				if err := tx.Create(&src).Error; err != nil {
-					return err
-				}
+				created = append(created, src)
 				st.Inserted++
 			}
-			touched[songID] = true
+			if !isNew {
+				touched[songID] = true
+			}
+		}
+		if len(created) > 0 {
+			if err := tx.CreateInBatches(&created, 200).Error; err != nil {
+				return err
+			}
 		}
 		return in.reaggregate(tx, touched, now)
 	})
-	return st, err
+	if err != nil {
+		newRows = nil // rolled back: nothing to index
+	}
+	return st, newRows, err
+}
+
+// aggregate computes a song's display and aggregate fields from its
+// sources (any order; the provider priority decides). Key, ID and
+// FirstSeenAt are left to the caller (key only feeds search_text).
+func (in *Ingester) aggregate(key string, srcs []Source, now time.Time) Song {
+	srcs = slices.Clone(srcs)
+	slices.SortStableFunc(srcs, func(a, b Source) int { return in.rank(a.Provider) - in.rank(b.Provider) })
+	first := Identify(srcs[0].Title, srcs[0].Artist)
+	out := Song{Title: first.Title, Artist: first.Artist, UpdatedAt: now, SourceCount: len(srcs),
+		Kind: srcs[0].Kind, SearchVersion: SearchTextVersion}
+	if out.Kind == "" {
+		out.Kind = KindSong
+	}
+	featSeen := map[string]bool{Fold(first.Artist): true}
+	feat, providers := []string{}, []string{}
+	provSeen := map[string]bool{}
+	for _, src := range srcs {
+		id := Identify(src.Title, src.Artist)
+		for _, f := range id.Featured {
+			if k := Fold(f); !featSeen[k] {
+				featSeen[k] = true
+				feat = append(feat, f)
+			}
+		}
+		if !provSeen[src.Provider] {
+			provSeen[src.Provider] = true
+			providers = append(providers, src.Provider)
+		}
+		if out.Genre == "" {
+			out.Genre = src.Genre
+		}
+		if out.CoverURL == "" {
+			out.CoverURL = src.CoverURL
+		}
+		if out.AudioURL == "" {
+			out.AudioURL = src.AudioURL
+		}
+		if out.DurationMs == 0 && src.DurationMs > 0 {
+			out.DurationMs = src.DurationMs
+		}
+		if out.ReleasedAt == nil {
+			out.ReleasedAt = src.ReleasedAt
+		}
+		if src.Plays != nil {
+			out.Plays += int64(*src.Plays)
+		}
+	}
+	out.Featured = datatypes.NewJSONSlice(feat)
+	out.Providers = datatypes.NewJSONSlice(providers)
+	out.SearchText = SearchText(first.Title, first.Artist, feat, key)
+	return out
 }
 
 // fillFrom keeps the stored value for every field the incoming track
@@ -251,60 +367,11 @@ func (in *Ingester) reaggregateChunk(tx *gorm.DB, ids []uint, now time.Time) err
 			}
 			continue
 		}
-		srcs := s.Sources
-		slices.SortStableFunc(srcs, func(a, b Source) int { return in.rank(a.Provider) - in.rank(b.Provider) })
-
-		first := Identify(srcs[0].Title, srcs[0].Artist)
-		upd := map[string]any{"title": first.Title, "artist": first.Artist, "updated_at": now,
-			"genre": "", "cover_url": "", "audio_url": "", "duration_ms": 0, "plays": int64(0), "released_at": nil}
-		featSeen := map[string]bool{Fold(first.Artist): true}
-		var feat, providers []string
-		var plays int64
-		provSeen := map[string]bool{}
-		for _, src := range srcs {
-			id := Identify(src.Title, src.Artist)
-			for _, f := range id.Featured {
-				if k := Fold(f); !featSeen[k] {
-					featSeen[k] = true
-					feat = append(feat, f)
-				}
-			}
-			if !provSeen[src.Provider] {
-				provSeen[src.Provider] = true
-				providers = append(providers, src.Provider)
-			}
-			if upd["genre"] == "" && src.Genre != "" {
-				upd["genre"] = src.Genre
-			}
-			if upd["cover_url"] == "" && src.CoverURL != "" {
-				upd["cover_url"] = src.CoverURL
-			}
-			if upd["audio_url"] == "" && src.AudioURL != "" {
-				upd["audio_url"] = src.AudioURL
-			}
-			if upd["duration_ms"] == 0 && src.DurationMs > 0 {
-				upd["duration_ms"] = src.DurationMs
-			}
-			if upd["released_at"] == nil && src.ReleasedAt != nil {
-				upd["released_at"] = src.ReleasedAt
-			}
-			if src.Plays != nil {
-				plays += int64(*src.Plays)
-			}
-		}
-		if feat == nil {
-			feat = []string{}
-		}
-		upd["plays"] = plays
-		upd["featured"] = datatypes.NewJSONSlice(feat)
-		upd["providers"] = datatypes.NewJSONSlice(providers)
-		upd["source_count"] = len(srcs)
-		upd["search_text"] = SearchText(first.Title, first.Artist, feat, s.Key)
-		upd["kind"] = srcs[0].Kind
-		if upd["kind"] == "" {
-			upd["kind"] = KindSong
-		}
-		upd["search_version"] = SearchTextVersion
+		a := in.aggregate(s.Key, s.Sources, now)
+		upd := map[string]any{"title": a.Title, "artist": a.Artist, "updated_at": now,
+			"genre": a.Genre, "cover_url": a.CoverURL, "audio_url": a.AudioURL, "duration_ms": a.DurationMs,
+			"plays": a.Plays, "released_at": a.ReleasedAt, "featured": a.Featured, "providers": a.Providers,
+			"source_count": a.SourceCount, "search_text": a.SearchText, "kind": a.Kind, "search_version": a.SearchVersion}
 		if err := tx.Model(&Song{}).Where("id = ?", s.ID).Updates(upd).Error; err != nil {
 			return err
 		}

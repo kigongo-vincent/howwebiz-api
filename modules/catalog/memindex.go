@@ -55,6 +55,10 @@ type MemIndex struct {
 
 	base  atomic.Pointer[memSnapshot]
 	delta atomic.Pointer[memSnapshot]
+	// extra: songs a live search just stored (Add), searchable at once
+	// rather than after the next delta; dropped once a snapshot has them.
+	extra   atomic.Pointer[memSnapshot]
+	extraMu sync.Mutex
 }
 
 // Ready: the base index is built (until then, search uses the database).
@@ -69,7 +73,83 @@ func (m *MemIndex) Size() int {
 	if d := m.delta.Load(); d != nil {
 		n += len(d.entries)
 	}
+	if x := m.extra.Load(); x != nil {
+		n += len(x.entries)
+	}
 	return n
+}
+
+// entry appends one row to the snapshot (false: not searchable yet).
+func (s *memSnapshot) add(r memRow) bool {
+	if r.SearchText == "" {
+		return false
+	}
+	plays := min(r.Plays, math32)
+	s.entries = append(s.entries, memEntry{id: r.ID, off: uint32(len(s.arena)), n: uint32(len(r.SearchText)),
+		plays: int32(plays), mix: r.Kind == KindMix, hasAudio: r.HasAudio})
+	s.arena = append(s.arena, r.SearchText...)
+	return true
+}
+
+// has: the snapshot holds id (entries are in id order).
+func (s *memSnapshot) has(id uint32) bool {
+	_, ok := slices.BinarySearchFunc(s.entries, id, func(e memEntry, id uint32) int { return cmp.Compare(e.id, id) })
+	return ok
+}
+
+// Add makes songs just stored searchable at once. Songs already indexed
+// (or once a later snapshot loads them) are not repeated.
+func (m *MemIndex) Add(rows []memRow) {
+	if !m.Ready() || len(rows) == 0 {
+		return
+	}
+	m.extraMu.Lock()
+	defer m.extraMu.Unlock()
+	next := &memSnapshot{}
+	if old := m.extra.Load(); old != nil {
+		next.arena = slices.Clone(old.arena)
+		next.entries = slices.Clone(old.entries)
+	}
+	known := func(id uint32) bool {
+		if m.base.Load().has(id) {
+			return true
+		}
+		if d := m.delta.Load(); d != nil && d.has(id) {
+			return true
+		}
+		return slices.ContainsFunc(next.entries, func(e memEntry) bool { return e.id == id })
+	}
+	for _, r := range rows {
+		if !known(r.ID) {
+			next.add(r)
+		}
+	}
+	slices.SortFunc(next.entries, func(a, b memEntry) int { return cmp.Compare(a.id, b.id) })
+	m.extra.Store(next)
+}
+
+// pruneExtra drops the added songs a snapshot now holds.
+func (m *MemIndex) pruneExtra() {
+	m.extraMu.Lock()
+	defer m.extraMu.Unlock()
+	old := m.extra.Load()
+	if old == nil {
+		return
+	}
+	b, d := m.base.Load(), m.delta.Load()
+	next := &memSnapshot{}
+	for _, e := range old.entries {
+		if (b != nil && b.has(e.id)) || (d != nil && d.has(e.id)) {
+			continue
+		}
+		next.entries = append(next.entries, memEntry{id: e.id, off: uint32(len(next.arena)), n: e.n,
+			plays: e.plays, mix: e.mix, hasAudio: e.hasAudio})
+		next.arena = append(next.arena, old.text(e)...)
+	}
+	if len(next.entries) == 0 {
+		next = nil
+	}
+	m.extra.Store(next)
 }
 
 type memRow struct {
@@ -97,16 +177,7 @@ func (m *MemIndex) load(ctx context.Context, after uint32, sizeHint int) (*memSn
 		}
 		for _, r := range rows {
 			snap.maxID = r.ID
-			if r.SearchText == "" {
-				continue // not searchable yet (the backfill fills it)
-			}
-			plays := r.Plays
-			if plays > math32 {
-				plays = math32
-			}
-			snap.entries = append(snap.entries, memEntry{id: r.ID, off: uint32(len(snap.arena)), n: uint32(len(r.SearchText)),
-				plays: int32(plays), mix: r.Kind == KindMix, hasAudio: r.HasAudio})
-			snap.arena = append(snap.arena, r.SearchText...)
+			snap.add(r) // without search_text: not searchable yet (the backfill fills it)
 		}
 		if len(rows) < batch {
 			return snap, nil
@@ -136,6 +207,7 @@ func (m *MemIndex) Build(ctx context.Context) error {
 	}
 	m.base.Store(snap)
 	m.delta.Store(nil)
+	m.pruneExtra()
 	slog.Info("catalog: in-memory search index built", "songs", len(snap.entries),
 		"mb", len(snap.arena)>>20, "took", time.Since(start).Round(time.Second))
 	return nil
@@ -152,6 +224,7 @@ func (m *MemIndex) Refresh(ctx context.Context) error {
 		return err
 	}
 	m.delta.Store(snap)
+	m.pruneExtra()
 	return nil
 }
 
@@ -214,6 +287,9 @@ func (m *MemIndex) scan(f func(s *memSnapshot, e memEntry) (memHit, bool)) []mem
 	}
 	if d := m.delta.Load(); d != nil {
 		snaps = append(snaps, d)
+	}
+	if x := m.extra.Load(); x != nil {
+		snaps = append(snaps, x)
 	}
 	workers := max(1, runtime.GOMAXPROCS(0))
 	var mu sync.Mutex

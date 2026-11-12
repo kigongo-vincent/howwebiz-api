@@ -4,6 +4,7 @@ import (
 	crand "crypto/rand"
 	"encoding/hex"
 	"errors"
+	"log/slog"
 	"slices"
 	"strconv"
 	"strings"
@@ -110,6 +111,7 @@ func (s *Service) List(c *fiber.Ctx) error {
 	}
 	res, err := s.Search.Search(c.UserContext(), q)
 	if err != nil {
+		slog.Error("catalog: search failed", "q", q.Q, "page", q.Page, "err", err)
 		return base.API_FAIL(c, fiber.StatusInternalServerError, "failed to search songs")
 	}
 	for i := range res.Songs {

@@ -361,3 +361,58 @@ func TestMemIndexCandidatesAndDelta(t *testing.T) {
 		t.Fatalf("sort=plays: %d songs, want the 20 afro tunes", len(res.Songs))
 	}
 }
+
+// A live search finds songs the catalog didn't have: they must be in its
+// answer (the in-memory index learns them at once, not a minute later),
+// and when storing them outlasts the request, the next request has them.
+func TestLiveResultsSearchableAtOnce(t *testing.T) {
+	s := seedCatalog(t)
+	s.textIndexed.Store(true)
+	mem := &MemIndex{DB: s.DB}
+	ctx := context.Background()
+	if err := mem.Build(ctx); err != nil {
+		t.Fatal(err)
+	}
+	s.Mem = mem
+	s.CacheTTL = time.Hour
+	s.Searchers = []Searcher{&fakeSearcher{name: "p1", hits: []Track{
+		{Provider: "p1", ExternalID: "a", Title: "Zanzibar Nights", Artist: "Qwerty Band", AudioURL: "u/a"},
+		{Provider: "p1", ExternalID: "b", Title: "Zanzibar Mornings", Artist: "Qwerty Band", AudioURL: "u/b"}}}}
+	res, err := s.Search(ctx, Query{Q: "qwerty zanzibar", Page: 1, Limit: 20, Live: LiveAuto})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Ingested.NewSongs != 2 || len(res.Songs) != 2 || res.Total != 2 {
+		t.Fatalf("live songs missing from the answer: ingested=%+v total=%d songs=%d", res.Ingested, res.Total, len(res.Songs))
+	}
+	if got := res.Songs[0]; got.Providers[0] != "p1" || got.SourceCount != 1 || got.AudioURL == "" || got.SearchText == "" {
+		t.Fatalf("new song not aggregated: %+v", got)
+	}
+
+	// Storing outlasts the request: it answers without them, then they land.
+	slot := make(chan struct{}, 1)
+	s.ingestOnce.Do(func() {})
+	s.ingestSlot = slot
+	slot <- struct{}{} // the store slot is busy
+	_, landed := s.ingestLive([]Track{{Provider: "p1", ExternalID: "c", Title: "Lateish Tune", Artist: "Slowpoke",
+		AudioURL: "u/c"}}, nil, 10*time.Millisecond, nil)
+	if landed {
+		t.Fatal("should not have landed while the slot is busy")
+	}
+	<-slot
+	deadline := time.Now().Add(2 * time.Second)
+	for s.ingestPending.Load() > 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	res, _ = s.Search(ctx, Query{Q: "lateish tune", Page: 1, Limit: 5, Live: LiveOff})
+	if len(res.Songs) == 0 || res.Songs[0].Title != "Lateish Tune" {
+		t.Fatalf("late song not searchable: %+v", res.Songs)
+	}
+	// a refresh that loads it keeps one copy, not two
+	if err := mem.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if x := mem.extra.Load(); x != nil {
+		t.Fatalf("extra still holds %d songs after a refresh loaded them", len(x.entries))
+	}
+}

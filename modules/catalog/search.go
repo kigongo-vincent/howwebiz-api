@@ -103,6 +103,11 @@ type SearchService struct {
 
 	mu    sync.Mutex
 	cache map[string]time.Time // provider|query → when it was last fetched
+
+	// live-search results waiting to be stored, and the one store slot
+	ingestOnce    sync.Once
+	ingestSlot    chan struct{}
+	ingestPending atomic.Int32
 }
 
 const cacheNS = "catalog"
@@ -262,6 +267,10 @@ const rareWordHits = 50
 // very common word).
 func (s *SearchService) fuzzyIDs(ctx context.Context, gen string, words []string) map[string][]uint {
 	out := map[string][]uint{}
+	// all words share one deadline: per word, a three-word query on a busy
+	// database spent most of the request's budget here
+	ctx, cancelAll := context.WithTimeout(ctx, fuzzyTotalTimeout)
+	defer cancelAll()
 	for _, w := range words {
 		if utf8.RuneCountInString(w) < fuzzyMinRunes {
 			continue
@@ -339,8 +348,12 @@ func (s *SearchService) looseIDs(ctx context.Context, w string) ([]uint, bool) {
 	return ids, true
 }
 
-// fuzzyWordTimeout: the most typo matching may take per word.
-const fuzzyWordTimeout = 2500 * time.Millisecond
+// fuzzyWordTimeout: the most typo matching may take per word;
+// fuzzyTotalTimeout: for all of a query's words together.
+const (
+	fuzzyWordTimeout  = 1500 * time.Millisecond
+	fuzzyTotalTimeout = 2 * time.Second
+)
 
 // cacheKey is a stable digest of the parts of a query that shape a result.
 func cacheKey(parts ...any) string {
@@ -358,6 +371,14 @@ func (s *SearchService) cached(key string) bool {
 	return ok && time.Since(t) < s.CacheTTL
 }
 
+func (s *SearchService) forget(keys []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, k := range keys {
+		delete(s.cache, k)
+	}
+}
+
 func (s *SearchService) remember(key string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -369,7 +390,10 @@ func (s *SearchService) remember(key string) {
 
 // live asks every provider in parallel; results are ingested so the
 // local query that follows sees them merged with everything else.
-func (s *SearchService) live(ctx context.Context, q string, timeout time.Duration) ([]ProviderSearch, IngestStats) {
+//
+// The results are stored before it returns when that fits in ctx's time;
+// landed false: they are still being stored, and onLate runs when they are.
+func (s *SearchService) live(ctx context.Context, q string, timeout time.Duration, onLate func()) (_ []ProviderSearch, _ IngestStats, landed bool) {
 	q = strings.TrimSpace(q)
 	out := make([]ProviderSearch, len(s.Searchers))
 	found := make([][]Track, len(s.Searchers))
@@ -428,11 +452,89 @@ collect:
 		}
 	}
 	var all []Track
-	for _, f := range found {
+	var keys []string
+	for i, f := range found {
 		all = append(all, f...)
+		if len(f) > 0 {
+			keys = append(keys, s.Searchers[i].Name()+"|"+Fold(q))
+		}
 	}
-	st, _ := s.Ingester.Ingest(all, time.Now().UTC())
-	return out, st
+	// Store what they found, waiting no longer than the request can afford
+	// (minus time for the second answer); the rest lands in the background.
+	wait := time.Duration(0)
+	if dl, ok := ctx.Deadline(); ok {
+		wait = time.Until(dl) - secondAnswerReserve
+	}
+	st, landed := s.ingestLive(all, keys, wait, onLate)
+	return out, st, landed
+}
+
+// secondAnswerReserve: request time kept for the catalog's second answer
+// after a live search.
+const secondAnswerReserve = 1500 * time.Millisecond
+
+// maxPendingIngests: live results waiting to be stored, at most; past it
+// they're dropped (and their providers asked again by the next search).
+const maxPendingIngests = 8
+
+// ingestLive stores live-search results off the request, one batch at a
+// time on the API pool (a few statements each: see ingestBatch). It waits
+// up to wait for them to land; landed is false when they didn't (yet),
+// and onLate then runs once they do, if they added anything. New songs go
+// into the in-memory index at once, so the very next query finds them.
+func (s *SearchService) ingestLive(tracks []Track, keys []string, wait time.Duration, onLate func()) (IngestStats, bool) {
+	if len(tracks) == 0 {
+		return IngestStats{}, true
+	}
+	s.ingestOnce.Do(func() { s.ingestSlot = make(chan struct{}, 1) })
+	if s.ingestPending.Add(1) > maxPendingIngests {
+		s.ingestPending.Add(-1)
+		s.forget(keys)
+		slog.Warn("catalog: live results dropped, too many waiting to be stored", "tracks", len(tracks))
+		return IngestStats{}, false
+	}
+	done := make(chan IngestStats, 1)
+	var late atomic.Bool
+	go func() {
+		defer s.ingestPending.Add(-1)
+		var st IngestStats
+		_ = base.Safe("live ingest", func() {
+			s.ingestSlot <- struct{}{}
+			defer func() { <-s.ingestSlot }()
+			var rows []memRow
+			var err error
+			st, rows, err = s.Ingester.ingest(tracks, time.Now().UTC())
+			if err != nil {
+				s.forget(keys) // ask again next time rather than miss these for CacheTTL
+				slog.Warn("catalog: storing live results", "err", err, "tracks", len(tracks))
+			}
+			s.Mem.Add(rows)
+		})
+		done <- st
+		if late.Load() && onLate != nil && (st.NewSongs > 0 || st.Attached > 0 || st.Inserted > 0) {
+			onLate()
+		}
+	}()
+	if wait <= 0 {
+		late.Store(true)
+		return IngestStats{}, false
+	}
+	t := time.NewTimer(wait)
+	defer t.Stop()
+	select {
+	case st := <-done:
+		return st, true
+	case <-t.C:
+		late.Store(true)
+		// it may have landed just now
+		select {
+		case st := <-done:
+			late.Store(false)
+			return st, true
+		default:
+			return IngestStats{}, false
+		}
+	}
 }
 
 func likeEscape(s string) string {
@@ -479,9 +581,13 @@ func (s *SearchService) Search(ctx context.Context, q Query) (Result, error) {
 		return res, nil
 	}
 	canLive := text != "" && len(s.Searchers) > 0
+	// Live results that land after this request answered: the total cached
+	// meanwhile undercounts them (the page itself is not cached then).
+	onLate := func() { s.Cache.Del(context.Background(), countKey) }
+	landed := true
 	// live=true: ask the providers first, always
 	if canLive && q.Live == LiveOn {
-		res.Live, res.Ingested = s.live(ctx, text, s.liveTimeout(budget))
+		res.Live, res.Ingested, landed = s.live(ctx, text, s.liveTimeout(budget), onLate)
 	}
 
 	// local runs the catalog query; it may run twice (after a live search).
@@ -533,7 +639,7 @@ func (s *SearchService) Search(ctx context.Context, q Query) (Result, error) {
 				// Only a bounded candidate set is scored (see candidates).
 				var ids []uint
 				if useMem {
-					ids = append(s.Mem.Candidates(words, kind, audioOnly), m.fuzzyCandidates()...)
+					ids = dedupe(append(s.Mem.Candidates(words, kind, audioOnly), m.fuzzyCandidates()...))
 				} else {
 					var err error
 					if ids, err = s.candidateIDs(ctx, m); err != nil {
@@ -564,7 +670,12 @@ func (s *SearchService) Search(ctx context.Context, q Query) (Result, error) {
 		// total reads "N+" past the cap (TotalCapped says so).
 		// A count the database can't answer in time (it is strained) falls
 		// back to the last one known: a total a few minutes old beats an error.
-		if res.Ingested.NewSongs > 0 || !s.Cache.Get(ctx, countKey, &res.Total) {
+		// The in-memory index already filtered by kind and audio: with no
+		// other filter, its candidates are the matches, no count needed.
+		memTotal := useMem && candidates >= 0 && q.Genre == "" && q.Artist == "" && q.Provider == ""
+		if memTotal {
+			res.Total = candidates
+		} else if res.Ingested.NewSongs > 0 || !s.Cache.Get(ctx, countKey, &res.Total) {
 			lastKey := "count-last:" + cacheKey(filters...)
 			filtered := len(words) > 0 || q.Genre != "" || q.Artist != "" || q.Provider != ""
 			var n int64
@@ -619,9 +730,10 @@ func (s *SearchService) Search(ctx context.Context, q Query) (Result, error) {
 		// Nothing past the last match: skip the query (deep pages are the
 		// costliest OFFSETs).
 		if int64((page-1)*limit) < res.Total {
-			if err := db.Preload("Sources").Offset((page - 1) * limit).Limit(limit).Find(&res.Songs).Error; err != nil {
+			if err := db.Offset((page - 1) * limit).Limit(limit).Find(&res.Songs).Error; err != nil {
 				return err
 			}
+			s.loadSources(ctx, res.Songs)
 		}
 		if res.Songs == nil {
 			res.Songs = []Song{}
@@ -654,7 +766,7 @@ func (s *SearchService) Search(ctx context.Context, q Query) (Result, error) {
 		// skip it only when too little time is left to be worth asking
 		if lt := s.liveTimeout(time.Until(deadline)); lt > 0 && lt >= min(500*time.Millisecond, s.liveTimeout(budget)) {
 			first := res
-			res.Live, res.Ingested = s.live(ctx, text, lt)
+			res.Live, res.Ingested, landed = s.live(ctx, text, lt, onLate)
 			if res.Ingested.NewSongs > 0 || res.Ingested.Attached > 0 || res.Ingested.Inserted > 0 {
 				if err := local(); err != nil {
 					live, ing := res.Live, res.Ingested
@@ -664,8 +776,55 @@ func (s *SearchService) Search(ctx context.Context, q Query) (Result, error) {
 			}
 		}
 	}
-	s.Cache.Set(ctx, resultKey, res, s.ResultTTL)
+	// Live results still being stored: the next request (a moment later)
+	// must see them, not this answer cached without them.
+	if landed {
+		s.Cache.Set(ctx, resultKey, res, s.ResultTTL)
+	}
 	return res, nil
+}
+
+// loadSources fills each song's sources (one query). On a database too
+// busy to answer in time the songs go out without them (each still has
+// its best audio and cover): a page without sources beats an error.
+func (s *SearchService) loadSources(ctx context.Context, songs []Song) {
+	if len(songs) == 0 {
+		return
+	}
+	ids := make([]uint, len(songs))
+	for i, x := range songs {
+		ids[i] = x.ID
+	}
+	var srcs []Source
+	if err := s.DB.WithContext(ctx).Where("song_id IN ?", ids).Order("id").Find(&srcs).Error; err != nil {
+		slog.Warn("catalog: search page without sources", "err", err)
+		for i := range songs {
+			songs[i].Sources = []Source{}
+		}
+		return
+	}
+	by := map[uint][]Source{}
+	for _, x := range srcs {
+		by[x.SongID] = append(by[x.SongID], x)
+	}
+	for i := range songs {
+		songs[i].Sources = by[songs[i].ID]
+		if songs[i].Sources == nil {
+			songs[i].Sources = []Source{}
+		}
+	}
+}
+
+func dedupe(ids []uint) []uint {
+	seen := make(map[uint]bool, len(ids))
+	out := ids[:0]
+	for _, id := range ids {
+		if !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // Get returns one catalog entry with all its sources.
