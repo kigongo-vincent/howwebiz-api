@@ -26,6 +26,31 @@ type Runner struct {
 	mu      sync.Mutex
 	running uint
 	wg      sync.WaitGroup
+
+	// resumers relaunch an interrupted run of their kind from its stored
+	// options (see OnResume, ResumeInterrupted).
+	resumers map[string]Resumer
+}
+
+// Resumer starts a run of its kind from stored options (JSON), with the
+// trigger "resume". Each source registers one for each kind it runs.
+type Resumer func(trigger string, opts json.RawMessage) (*CrawlRun, error)
+
+// MaxResumes: a run resumed this many times in a row (it keeps dying) is
+// given up instead of resumed again.
+const MaxResumes = 3
+
+// TriggerResume marks runs started by ResumeInterrupted.
+const TriggerResume = "resume"
+
+// OnResume registers how to restart an interrupted run of kind.
+func (e *Runner) OnResume(kind string, fn Resumer) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.resumers == nil {
+		e.resumers = map[string]Resumer{}
+	}
+	e.resumers[kind] = fn
 }
 
 func NewRunner(ctx context.Context, db *gorm.DB, log *slog.Logger, kinds ...string) *Runner {
@@ -55,11 +80,11 @@ func (e *Runner) Launch(trigger, kind string, opts any, job func(ctx context.Con
 	if e.running != 0 {
 		return &CrawlRun{ID: e.running}, ErrBusy
 	}
-	// Mark this runner's leftovers from a crashed process so history stays
-	// truthful (other runners' kinds may legitimately be running).
-	e.DB.Model(&CrawlRun{}).Where("status = ? AND kind IN ?", StatusRunning, e.kinds).Updates(map[string]any{
-		"status": StatusFailed, "errors": datatypes.NewJSONSlice([]string{"interrupted: server stopped"}),
-	})
+	// Runs of this runner still marked running belong to a process that
+	// died; they become interrupted (ResumeInterrupted continues them at
+	// start; one left over now is simply recorded as such).
+	e.DB.Model(&CrawlRun{}).Where("status = ? AND kind IN ?", StatusRunning, e.kinds).
+		Update("status", StatusInterrupted)
 	run := &CrawlRun{
 		Kind: kind, Trigger: trigger, Status: StatusRunning, StartedAt: time.Now().UTC(),
 		Options: datatypes.JSON(optJSON), Errors: datatypes.NewJSONSlice([]string{}),
@@ -153,14 +178,16 @@ func (e *Runner) execute(run *CrawlRun, job func(ctx context.Context, st *RunSta
 		st.fail("%v", err)
 	}
 	close(done)
-	if ctx.Err() != nil {
-		st.fail("cancelled: %v", ctx.Err())
-	}
 
 	stats, _ := st.snapshot()
 	didWork := stats.PagesFetched+stats.DetailsFetched+stats.Probed > 0
 	status := StatusSucceeded
 	switch {
+	case ctx.Err() != nil:
+		// shutdown: progress is saved (cursors, ingested songs); the next
+		// start resumes this run where it stopped
+		status = StatusInterrupted
+		log.Info("crawl interrupted by shutdown; resumes on next start")
 	case stats.ErrorsTotal > 0 && !didWork:
 		status = StatusFailed
 	case stats.ErrorsTotal > 0:
@@ -183,3 +210,79 @@ func (r *RunState) Fail(format string, a ...any) { r.fail(format, a...) }
 
 // Add updates the run's counters.
 func (r *RunState) Add(f func(*Stats)) { r.add(f) }
+
+// ResumeInterrupted continues, at start, the latest run of this runner
+// that a shutdown or crash stopped (status interrupted, or still running
+// from a dead process). It is relaunched with its own options, minus the
+// "start over" ones (reset, refresh): every source resumes from the
+// cursors it saved as it went. Older interrupted runs are marked
+// superseded; a run already resumed MaxResumes times in a row is given up.
+// Call it once, before anything else launches runs.
+func (e *Runner) ResumeInterrupted() (*CrawlRun, error) {
+	var stopped []CrawlRun
+	if err := e.DB.Where("kind IN ? AND status IN ? AND resumed_by IS NULL", e.kinds, []string{StatusRunning, StatusInterrupted}).
+		Order("id DESC").Find(&stopped).Error; err != nil {
+		return nil, err
+	}
+	if len(stopped) == 0 {
+		return nil, nil
+	}
+	now := time.Now().UTC()
+	finish := func(r CrawlRun, status, why string) {
+		errs := append([]string(r.Errors), why)
+		upd := map[string]any{"status": status, "errors": datatypes.NewJSONSlice(errs)}
+		if r.FinishedAt == nil {
+			upd["finished_at"] = now
+		}
+		e.DB.Model(&CrawlRun{}).Where("id = ?", r.ID).Updates(upd)
+	}
+	for _, old := range stopped[1:] {
+		finish(old, StatusInterrupted, fmt.Sprintf("superseded: run %d is the one resumed", stopped[0].ID))
+	}
+	last := stopped[0]
+	if last.Attempt >= MaxResumes {
+		finish(last, StatusFailed, fmt.Sprintf("not resumed: interrupted %d times in a row", last.Attempt+1))
+		return nil, nil
+	}
+	e.mu.Lock()
+	resume := e.resumers[last.Kind]
+	e.mu.Unlock()
+	if resume == nil {
+		finish(last, StatusInterrupted, "not resumed: no resumer for kind "+last.Kind)
+		return nil, nil
+	}
+	finish(last, StatusInterrupted, "resumed on start")
+	run, err := resume(TriggerResume, withoutRestart(last.Options))
+	if err != nil {
+		return nil, fmt.Errorf("resume run %d (%s): %w", last.ID, last.Kind, err)
+	}
+	e.DB.Model(&CrawlRun{}).Where("id = ?", run.ID).Update("attempt", last.Attempt+1)
+	e.DB.Model(&CrawlRun{}).Where("id = ?", last.ID).Update("resumed_by", run.ID)
+	e.log.Info("crawl resumed", "run", run.ID, "kind", last.Kind, "from", last.ID, "attempt", last.Attempt+1)
+	return run, nil
+}
+
+// withoutRestart turns off options that would discard saved progress.
+func withoutRestart(opts []byte) json.RawMessage {
+	var m map[string]any
+	if json.Unmarshal(opts, &m) != nil || m == nil {
+		return json.RawMessage(opts)
+	}
+	for _, k := range []string{"reset", "refresh", "refreshCategories"} {
+		if _, ok := m[k]; ok {
+			m[k] = false
+		}
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return json.RawMessage(opts)
+	}
+	return b
+}
+
+// MarkInterrupted records this runner's in-progress run as interrupted
+// (shutdown grace ran out before it stopped on its own).
+func (e *Runner) MarkInterrupted() {
+	e.DB.Model(&CrawlRun{}).Where("status = ? AND kind IN ?", StatusRunning, e.kinds).Updates(map[string]any{
+		"status": StatusInterrupted, "finished_at": time.Now().UTC()})
+}

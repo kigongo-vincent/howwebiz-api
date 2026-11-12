@@ -2,6 +2,7 @@ package audiocom
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -62,7 +63,7 @@ func NewService(ctx context.Context, db *gorm.DB, cfg Config, web WebConfig) *Se
 	hc := &http.Client{Timeout: 20 * time.Second}
 	o := &OAuth{DB: db, APIBase: cfg.APIBase, RedirectURI: cfg.RedirectURI, http: hc}
 	log := slog.Default().With("module", "audiocom")
-	return &Service{
+	s := &Service{
 		DB: db, Cfg: cfg, OAuth: o, log: log,
 		Client: &Client{APIBase: cfg.APIBase, OAuth: o, http: hc, gap: time.Minute / time.Duration(cfg.RatePerMin)},
 		Web:    NewWeb(db, web),
@@ -71,6 +72,21 @@ func NewService(ctx context.Context, db *gorm.DB, cfg Config, web WebConfig) *Se
 		Runner: crawler.NewRunner(ctx, db, log, KindAudiocom, KindAudiocomWeb),
 		cache:  map[string]cachedSearch{},
 	}
+	s.Runner.OnResume(KindAudiocom, func(trigger string, raw json.RawMessage) (*crawler.CrawlRun, error) {
+		var o CrawlOptions
+		if err := json.Unmarshal(raw, &o); err != nil {
+			return nil, err
+		}
+		return s.StartCrawl(trigger, o)
+	})
+	s.Runner.OnResume(KindAudiocomWeb, func(trigger string, raw json.RawMessage) (*crawler.CrawlRun, error) {
+		var o WebCrawlOptions
+		if err := json.Unmarshal(raw, &o); err != nil {
+			return nil, err
+		}
+		return s.StartWebCrawl(trigger, o)
+	})
+	return s
 }
 
 // DailySync is called by the daily scheduler: the API crawl when

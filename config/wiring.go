@@ -152,6 +152,9 @@ func Wire(ctx context.Context, db *gorm.DB, app *fiber.App, background bool) Dep
 		for _, name := range sites.Names() {
 			hooks = append(hooks, sites[name].DailySync)
 		}
+		// Safe restart: runs a shutdown or crash stopped continue first;
+		// the startup round then skips sources busy resuming.
+		deps.ResumeInterrupted()
 		deps.Scheduler = crawler.StartScheduler(ctx, engine, hooks...)
 		indexer.Start(ctx, base.EnvDuration("CATALOG_INDEX_INTERVAL", 2*time.Minute))
 	}
@@ -191,12 +194,46 @@ func newCache(ctx context.Context) *cache.Cache {
 	return c
 }
 
+// Runners: every source's crawl runner.
+func (d Dependencies) Runners() []*crawler.Runner {
+	out := []*crawler.Runner{d.Crawler.Runner, d.AudioCom.Runner, d.Momuziki.Runner}
+	for _, name := range d.Sites.Names() {
+		out = append(out, d.Sites[name].Runner)
+	}
+	return out
+}
+
+// ResumeInterrupted continues each source's run that a shutdown or crash
+// stopped (see crawler.Runner.ResumeInterrupted).
+func (d Dependencies) ResumeInterrupted() {
+	for _, r := range d.Runners() {
+		if _, err := r.ResumeInterrupted(); err != nil {
+			slog.Error("crawler: resume interrupted run", "err", err)
+		}
+	}
+}
+
 // Wait blocks until every crawler has stopped (after ctx is cancelled).
 func (d Dependencies) Wait() {
-	d.Crawler.Wait()
-	d.AudioCom.Runner.Wait()
-	d.Momuziki.Runner.Wait()
-	for _, s := range d.Sites {
-		s.Runner.Wait()
+	for _, r := range d.Runners() {
+		r.Wait()
+	}
+}
+
+// WaitFor waits up to grace for every crawler to stop at a safe point.
+// Runs still going after that are recorded as interrupted (their progress
+// is already saved; they resume on the next start). Reports whether all
+// stopped in time.
+func (d Dependencies) WaitFor(grace time.Duration) bool {
+	done := make(chan struct{})
+	go func() { d.Wait(); close(done) }()
+	select {
+	case <-done:
+		return true
+	case <-time.After(grace):
+		for _, r := range d.Runners() {
+			r.MarkInterrupted()
+		}
+		return false
 	}
 }

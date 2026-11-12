@@ -2,6 +2,7 @@ package momuziki
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -87,9 +88,17 @@ type Service struct {
 
 func NewService(ctx context.Context, db *gorm.DB, cfg Config) *Service {
 	b, _ := url.Parse(cfg.Web.BaseURL + "/")
-	return &Service{DB: db, Cfg: cfg, base: b,
+	s := &Service{DB: db, Cfg: cfg, base: b,
 		Web:    webguard.New(db, siteName, cfg.Web),
 		Runner: crawler.NewRunner(ctx, db, slog.Default().With("module", "momuziki"), Kind)}
+	s.Runner.OnResume(Kind, func(trigger string, raw json.RawMessage) (*crawler.CrawlRun, error) {
+		var o Options
+		if err := json.Unmarshal(raw, &o); err != nil {
+			return nil, err
+		}
+		return s.StartCrawl(trigger, o)
+	})
+	return s
 }
 
 func (s *Service) loadCursor() Cursor {

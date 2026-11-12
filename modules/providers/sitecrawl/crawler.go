@@ -2,6 +2,7 @@ package sitecrawl
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -106,9 +107,17 @@ type Crawler struct {
 
 func New(ctx context.Context, db *gorm.DB, site Site, cfg Config, in *catalog.Ingester) *Crawler {
 	log := slog.Default().With("module", "sitecrawl", "site", site.Name())
-	return &Crawler{DB: db, Site: site, Cfg: cfg, Ingester: in, log: log,
+	c := &Crawler{DB: db, Site: site, Cfg: cfg, Ingester: in, log: log,
 		Web:    webguard.New(db, site.Name(), cfg.Web),
 		Runner: crawler.NewRunner(ctx, db, log, KindPrefix+site.Name())}
+	c.Runner.OnResume(c.Kind(), func(trigger string, raw json.RawMessage) (*crawler.CrawlRun, error) {
+		var o Options
+		if err := json.Unmarshal(raw, &o); err != nil {
+			return nil, err
+		}
+		return c.Start(trigger, o)
+	})
+	return c
 }
 
 func (c *Crawler) Kind() string { return KindPrefix + c.Site.Name() }

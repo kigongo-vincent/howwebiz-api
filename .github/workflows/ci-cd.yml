@@ -75,7 +75,9 @@ jobs:
             echo "${{ secrets.ENV_FILE }}" > .env
 
             # Stop old container if exists
-            docker stop ${{ secrets.PROJECT_NAME }} || true
+            # Safe restart: SIGTERM, then up to 45s for crawls to stop at a
+            # safe point (they resume on the next start) before a kill
+            docker stop -t 45 ${{ secrets.PROJECT_NAME }} || true
             docker rm ${{ secrets.PROJECT_NAME }} || true
 
             # Run container with .env
@@ -85,6 +87,7 @@ jobs:
             docker run -d \
               --name ${{ secrets.PROJECT_NAME }} \
               --restart unless-stopped \
+              --stop-timeout 45 \
               --memory 1g --memory-swap 1g \
               --log-driver json-file --log-opt max-size=20m --log-opt max-file=5 \
               --env-file .env \

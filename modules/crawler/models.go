@@ -55,6 +55,10 @@ type CrawlRun struct {
 	Errors     datatypes.JSONSlice[string] `json:"errors"`
 	StartedAt  time.Time                   `json:"startedAt"`
 	FinishedAt *time.Time                  `json:"finishedAt"`
+	// Safe restart: a run stopped by a shutdown (or a crash) is resumed on
+	// the next start by a new run; Attempt counts the resumes in the chain.
+	Attempt   int   `json:"attempt" gorm:"not null;default:0"`
+	ResumedBy *uint `json:"resumedBy"` // the run that continued this one
 }
 
 const (
@@ -65,6 +69,9 @@ const (
 	StatusSucceeded = "succeeded"
 	StatusPartial   = "partial"
 	StatusFailed    = "failed"
+	// StatusInterrupted: stopped by a shutdown (or found running after a
+	// crash); its source resumes it on the next start.
+	StatusInterrupted = "interrupted"
 )
 
 // PageFingerprint remembers what a listing URL contained last time, so an

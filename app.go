@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"log/slog"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -35,10 +36,37 @@ func main() {
 	}()
 
 	<-ctx.Done()
-	slog.Info("shutting down")
-	if err := app.ShutdownWithTimeout(10 * time.Second); err != nil {
-		slog.Error("http shutdown", "err", err)
+	stop() // a second SIGINT/SIGTERM now ends the process at once
+	go func() {
+		force := make(chan os.Signal, 1)
+		signal.Notify(force, syscall.SIGINT, syscall.SIGTERM)
+		<-force
+		slog.Warn("second signal: exiting now (running crawls resume on next start)")
+		os.Exit(1)
+	}()
+
+	// Safe restart. ctx is cancelled, so every crawl stops at its next safe
+	// point (between pages; each page's songs and cursor are already
+	// stored) and is recorded as interrupted with its options, to be resumed
+	// on the next start. Meanwhile HTTP stops accepting connections and
+	// finishes the requests in flight.
+	grace := base.EnvDuration("SHUTDOWN_GRACE", 30*time.Second)
+	slog.Info("shutting down", "grace", grace)
+	httpDone := make(chan struct{})
+	go func() {
+		if err := app.ShutdownWithTimeout(min(grace, 15*time.Second)); err != nil {
+			slog.Error("http shutdown", "err", err)
+		}
+		close(httpDone)
+	}()
+	if deps.WaitFor(grace) {
+		slog.Info("crawls stopped cleanly")
+	} else {
+		slog.Warn("crawls still running after grace; recorded as interrupted, resume on next start")
 	}
-	// ctx is cancelled, so in-flight crawls stop and record their result
-	deps.Wait()
+	<-httpDone
+	if deps.Cache != nil {
+		_ = deps.Cache.Close()
+	}
+	slog.Info("shutdown complete")
 }

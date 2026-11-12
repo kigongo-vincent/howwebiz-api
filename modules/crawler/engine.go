@@ -2,6 +2,7 @@ package crawler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -75,7 +76,7 @@ type Engine struct {
 }
 
 func NewEngine(ctx context.Context, db *gorm.DB, cfg Config) *Engine {
-	return &Engine{
+	e := &Engine{
 		DB:     db,
 		Cfg:    cfg,
 		client: scraper.NewClient(cfg.BaseURL, cfg.UserAgent, cfg.RequestDelay, cfg.RequestTimeout),
@@ -83,6 +84,21 @@ func NewEngine(ctx context.Context, db *gorm.DB, cfg Config) *Engine {
 		log:    slog.Default().With("module", "crawler"),
 		Runner: NewRunner(ctx, db, slog.Default().With("module", "crawler"), KindLists, KindCatalog),
 	}
+	e.OnResume(KindLists, func(trigger string, raw json.RawMessage) (*CrawlRun, error) {
+		var o Options
+		if err := json.Unmarshal(raw, &o); err != nil {
+			return nil, err
+		}
+		return e.Start(trigger, o)
+	})
+	e.OnResume(KindCatalog, func(trigger string, raw json.RawMessage) (*CrawlRun, error) {
+		var o CatalogOptions
+		if err := json.Unmarshal(raw, &o); err != nil {
+			return nil, err
+		}
+		return e.StartCatalog(trigger, o)
+	})
+	return e
 }
 
 // Start launches a list crawl in the background and returns its run.
