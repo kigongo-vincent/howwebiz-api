@@ -31,10 +31,12 @@ import (
 
 const Name = "mdundo"
 
-// DefaultFeeds: East African charts first, then every genre page listed at
-// /genres. Override with MDUNDO_FEEDS (comma-separated paths).
+// DefaultFeeds: every country chart Mdundo has (East Africa first, then
+// the big Afro markets: Nigeria, Ghana, South Africa), then every genre
+// page listed at /genres. Override with MDUNDO_FEEDS (comma-separated paths).
 var DefaultFeeds = []string{
-	"top-charts/ug", "top-charts/ke", "top-charts/tz", "top-charts/rw", "top-charts/global",
+	"top-charts/ug", "top-charts/ke", "top-charts/tz", "top-charts/ng", "top-charts/gh", "top-charts/za",
+	"top-charts/cm", "top-charts/zm", "top-charts/mw", "top-charts/global",
 	"genre/1/Gospel", "genre/155/Afrobeats", "genre/3/Dancehall", "genre/2/Reggae", "genre/114/Pop",
 	"genre/143/Hip-Hop-Rap", "genre/241/R-B-Soul", "genre/253/Traditional", "genre/250/Afro-Vernacular",
 	"genre/177/African-Fusion", "genre/246/Bongo-Flava", "genre/282/Amapiano", "genre/261/Zouk",

@@ -95,3 +95,24 @@ func TestVerifiedOnly(t *testing.T) {
 		t.Fatalf("verified=%d all=%d", len(verified), len(all))
 	}
 }
+
+func TestChartFeeds(t *testing.T) {
+	s := Site{Base: "https://api.audius.co", AppName: "howwebiz", Genres: []string{"Rock"}, Charts: []string{"R&B/Soul"}}
+	feeds := s.Feeds()
+	if len(feeds) != 3 || feeds[1] != "trending:R&B/Soul:allTime" || feeds[2] != "trending:R&B/Soul:month" {
+		t.Fatalf("feeds %v", feeds)
+	}
+	body, err := os.ReadFile("testdata/trending_rnb.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var path string
+	get := func(_ context.Context, p string) ([]byte, error) { path = p; return body, nil }
+	tracks, next, done, err := s.FeedPage(context.Background(), get, "trending:R&B/Soul:allTime", "")
+	if err != nil || !done || next != "" || len(tracks) == 0 {
+		t.Fatalf("tracks=%d done=%v next=%q err=%v", len(tracks), done, next, err)
+	}
+	if path != "/v1/tracks/trending?app_name=howwebiz&genre=R%26B%2FSoul&time=allTime" {
+		t.Fatalf("path %q", path)
+	}
+}

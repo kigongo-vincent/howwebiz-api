@@ -76,6 +76,7 @@ func Wire(ctx context.Context, db *gorm.DB, app *fiber.App, background bool) Dep
 			MaxSongs: base.EnvInt("BUSOGA_MAX_SONGS", busoga.MaxSongsPerFeed)}, bsCfg, ingester),
 		audius.Name: sitecrawl.New(ctx, db, audius.Site{Base: auCfg.Web.BaseURL,
 			AppName: base.Env("AUDIUS_APP_NAME", "howwebiz"), Genres: base.EnvList("AUDIUS_GENRES", audius.Genres),
+			Charts:       base.EnvList("AUDIUS_CHARTS", audius.Charts),
 			VerifiedOnly: base.EnvBool("AUDIUS_VERIFIED_ONLY", false)}, auCfg, ingester),
 		internetarchive.Name: sitecrawl.New(ctx, db, internetarchive.Site{Base: iaCfg.Web.BaseURL,
 			Collections: base.EnvList("INTERNETARCHIVE_COLLECTIONS", internetarchive.DefaultCollections),

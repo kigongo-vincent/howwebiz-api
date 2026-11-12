@@ -4,6 +4,7 @@
 //
 //	/v1/tracks/search?query=&genre=G&sort_method=recent   newest first, per genre; offset+limit ≤ 10,000
 //	/v1/tracks/search?query=q                              live search
+//	/v1/tracks/trending?genre=G&time=T                     the genre's chart (100 most played; T = allTime, month, week)
 //	/v1/tracks/{id}/stream?app_name=…                      the full track (302 to a content node, Range supported)
 //
 // Only tracks that anyone may stream are stored: stream-gated tracks
@@ -16,6 +17,7 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/kigongo-vincent/howwebiz-api/modules/catalog"
@@ -37,10 +39,19 @@ var Genres = []string{"", "Electronic", "Rock", "Metal", "Alternative", "Hip-Hop
 	"Tropical House", "Downtempo", "Drum & Bass", "Dubstep", "Jersey Club", "Vaporwave", "Moombahton", "Afrobeats",
 	"Amapiano", "Blues", "Gospel"}
 
+// Charts: the popular end of a genre (verified artists such as Russ or
+// Soulja Boy release there). Each is read as "trending:{genre}:{time}".
+var Charts = []string{"Hip-Hop/Rap", "R&B/Soul", "Trap", "Pop", "Afrobeats", "Amapiano", "Dancehall",
+	"Reggae", "Funk", "Gospel", "Latin", "Electronic"}
+
+// ChartTimes: all-time favourites and what is popular now.
+var ChartTimes = []string{"allTime", "month"}
+
 type Site struct {
 	Base    string // https://api.audius.co
 	AppName string
 	Genres  []string
+	Charts  []string // genres whose charts are read (see Charts)
 	// VerifiedOnly keeps only tracks by verified artists (fewer re-uploads
 	// of other people's music, but ~90% fewer tracks).
 	VerifiedOnly bool
@@ -61,12 +72,20 @@ func (s Site) Feeds() []string {
 		}
 		out = append(out, g)
 	}
+	for _, g := range s.Charts {
+		for _, t := range ChartTimes {
+			out = append(out, "trending:"+g+":"+t)
+		}
+	}
 	return out
 }
 
 func (s Site) Tail(string) bool { return false } // newest first
 
 func (s Site) FeedPage(ctx context.Context, get sitecrawl.Fetch, feed, cursor string) ([]catalog.Track, string, bool, error) {
+	if chart, ok := strings.CutPrefix(feed, "trending:"); ok {
+		return s.chartPage(ctx, get, chart)
+	}
 	offset, _ := strconv.Atoi(cursor)
 	q := url.Values{"query": {""}, "sort_method": {"recent"}, "app_name": {s.AppName},
 		"limit": {strconv.Itoa(pageSize)}, "offset": {strconv.Itoa(offset)}}
@@ -86,6 +105,21 @@ func (s Site) FeedPage(ctx context.Context, get sitecrawl.Fetch, feed, cursor st
 	next := offset + pageSize
 	done := raw == 0 || next+pageSize > window
 	return tracks, strconv.Itoa(next), done, nil
+}
+
+// chartPage reads one chart ("{genre}:{time}"): a single page.
+func (s Site) chartPage(ctx context.Context, get sitecrawl.Fetch, chart string) ([]catalog.Track, string, bool, error) {
+	i := strings.LastIndex(chart, ":")
+	if i < 0 {
+		return nil, "", true, fmt.Errorf("audius: bad chart feed %q", chart)
+	}
+	q := url.Values{"genre": {chart[:i]}, "time": {chart[i+1:]}, "app_name": {s.AppName}}
+	body, err := get(ctx, "/v1/tracks/trending?"+q.Encode())
+	if err != nil {
+		return nil, "", false, err
+	}
+	_, tracks, err := s.Parse(body)
+	return tracks, "", true, err
 }
 
 func (s Site) SearchAPI(ctx context.Context, get sitecrawl.Fetch, q string, limit int) ([]catalog.Track, error) {
