@@ -20,11 +20,12 @@ func main() {
 
 	// 1. Build the application setup
 	app := config.SetupApplication()
-	db := config.ConnectDB()
+	db := config.ConnectDB()         // crawlers, ingest, upkeep
+	apiDB := config.ConnectAPIDB(db) // HTTP requests only: never starved by the above
 
 	// 2. Services, providers and the catalog; scheduler + indexer run in
 	// the background for the server's lifetime
-	deps := config.Wire(ctx, db, app, true)
+	deps := config.WireAPI(ctx, db, apiDB, app, true)
 	config.RegisterAppRoutes(deps)
 
 	// 3. Serve until SIGINT/SIGTERM, then drain

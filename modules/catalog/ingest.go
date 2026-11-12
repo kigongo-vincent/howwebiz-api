@@ -314,8 +314,16 @@ func Indexes(dialect string) []string {
 		`CREATE INDEX IF NOT EXISTS idx_catalog_songs_title_sort ON catalog_songs (LOWER(title), id)`,
 		// ?genre= compares LOWER(genre)
 		`CREATE INDEX IF NOT EXISTS idx_catalog_songs_genre_lower ON catalog_songs (LOWER(genre))`,
+		// ?genre= with the default kind=song, most played first (shelves read
+		// a genre's top songs all day): filter and order from one index
+		`CREATE INDEX IF NOT EXISTS idx_catalog_songs_genre_kind_plays ON catalog_songs (LOWER(genre), kind, plays DESC, id DESC)`,
 	}
 	if dialect == "postgres" {
+		// ?artist= is a prefix match on key ("tems|%"): the unique index on
+		// key can't serve LIKE under a non-C collation, so every artist
+		// lookup read the whole table. text_pattern_ops can.
+		stmts = append(stmts,
+			`CREATE INDEX IF NOT EXISTS idx_catalog_songs_key_prefix ON catalog_songs (key text_pattern_ops)`)
 		// superseded by search_text (and never usable inside the old OR)
 		stmts = append(stmts,
 			`DROP INDEX IF EXISTS idx_catalog_songs_key_trgm`,

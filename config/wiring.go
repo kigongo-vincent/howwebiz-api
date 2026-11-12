@@ -35,6 +35,13 @@ import (
 // providers into the catalog. With background=true it also starts the
 // daily scheduler and the catalog indexer (the server); tests pass false.
 func Wire(ctx context.Context, db *gorm.DB, app *fiber.App, background bool) Dependencies {
+	return WireAPI(ctx, db, db, app, background)
+}
+
+// WireAPI is Wire with the HTTP requests on their own pool (apiDB): the
+// catalog search, its live-search ingest and the read endpoints use it;
+// crawlers, ingest and upkeep use db.
+func WireAPI(ctx context.Context, db, apiDB *gorm.DB, app *fiber.App, background bool) Dependencies {
 	engine := crawler.NewEngine(ctx, db, crawler.ConfigFromEnv())
 	audioCom := audiocom.NewService(ctx, db, audiocom.ConfigFromEnv(), audiocom.WebConfigFromEnv())
 	mom := momuziki.NewService(ctx, db, momuziki.ConfigFromEnv())
@@ -108,17 +115,18 @@ func Wire(ctx context.Context, db *gorm.DB, app *fiber.App, background bool) Dep
 
 	rc := newCache(ctx)
 	indexer := &catalog.Indexer{DB: db, Ingester: ingester, Stores: stores, Batch: 500}
-	searchSvc := &catalog.SearchService{DB: db, Ingester: ingester, Searchers: searchers,
+	apiIngester := &catalog.Ingester{DB: apiDB, Priority: ingester.Priority} // live-search results, in the request
+	searchSvc := &catalog.SearchService{DB: apiDB, Ingester: apiIngester, Searchers: searchers,
 		Timeout:       base.EnvDuration("CATALOG_LIVE_TIMEOUT", 8*time.Second),
 		CacheTTL:      base.EnvDuration("CATALOG_LIVE_CACHE_TTL", 15*time.Minute),
 		Cache:         rc,
 		ResultTTL:     base.EnvDuration("CATALOG_RESULT_CACHE_TTL", 60*time.Second),
 		CountTTL:      base.EnvDuration("CATALOG_COUNT_CACHE_TTL", 5*time.Minute),
 		BackfillPause: base.EnvDuration("CATALOG_BACKFILL_PAUSE", 100*time.Millisecond)}
-	searchSvc.Fuzzy = trigramReady(db)
-	cat := &catalog.Service{DB: db, Ingester: ingester, Indexer: indexer, Providers: providers, Search: searchSvc}
+	searchSvc.Fuzzy = trigramReady(apiDB)
+	cat := &catalog.Service{DB: apiDB, Ingester: ingester, Indexer: indexer, Providers: providers, Search: searchSvc}
 
-	deps := Dependencies{DB: db, App: app, Crawler: engine, AudioCom: audioCom, Momuziki: mom, Catalog: cat, Sites: sites, Cache: rc}
+	deps := Dependencies{DB: db, APIDB: apiDB, App: app, Crawler: engine, AudioCom: audioCom, Momuziki: mom, Catalog: cat, Sites: sites, Cache: rc}
 	// Database upkeep: indexes, the audio-only purge, the search_text
 	// backfill, then its index. None of it is on the boot path: on a large
 	// catalog or a slow database it takes minutes, and the API serves

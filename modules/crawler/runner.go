@@ -172,10 +172,16 @@ func (e *Runner) execute(run *CrawlRun, job func(ctx context.Context, st *RunSta
 		}
 	}()
 
-	// A panic (e.g. a parser meeting markup it never saw) fails this run
-	// instead of killing the process and every other crawl with it.
-	if err := base.Safe(run.Kind+" crawl", func() { job(ctx, st) }); err != nil {
-		st.fail("%v", err)
+	// At most CRAWL_CONCURRENCY crawls work at once, across all sources:
+	// started together (every deploy starts them all), they saturated a
+	// small database. The others wait here for a slot.
+	if release, ok := acquireSlot(ctx, log); ok {
+		// A panic (e.g. a parser meeting markup it never saw) fails this run
+		// instead of killing the process and every other crawl with it.
+		if err := base.Safe(run.Kind+" crawl", func() { job(ctx, st) }); err != nil {
+			st.fail("%v", err)
+		}
+		release()
 	}
 	close(done)
 
@@ -285,4 +291,27 @@ func withoutRestart(opts []byte) json.RawMessage {
 func (e *Runner) MarkInterrupted() {
 	e.DB.Model(&CrawlRun{}).Where("status = ? AND kind IN ?", StatusRunning, e.kinds).Updates(map[string]any{
 		"status": StatusInterrupted, "finished_at": time.Now().UTC()})
+}
+
+var (
+	slotsOnce sync.Once
+	slots     chan struct{}
+)
+
+// acquireSlot waits for one of the CRAWL_CONCURRENCY (default 4) crawl
+// slots; false when ctx ends first (shutdown: the run is interrupted).
+func acquireSlot(ctx context.Context, log *slog.Logger) (release func(), ok bool) {
+	slotsOnce.Do(func() { slots = make(chan struct{}, max(1, base.EnvInt("CRAWL_CONCURRENCY", 4))) })
+	select {
+	case slots <- struct{}{}:
+		return func() { <-slots }, true
+	default:
+	}
+	log.Info("crawl waiting for a free slot", "concurrency", cap(slots))
+	select {
+	case slots <- struct{}{}:
+		return func() { <-slots }, true
+	case <-ctx.Done():
+		return func() {}, false
+	}
 }

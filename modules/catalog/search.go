@@ -98,6 +98,9 @@ type SearchService struct {
 
 const cacheNS = "catalog"
 
+// FilteredCountCap: a filtered search counts up to this many matches, no further
+const FilteredCountCap = 5000
+
 // Bump drops every cached result and total (after bulk changes).
 func (s *SearchService) Bump(ctx context.Context) { s.Cache.Bump(ctx, cacheNS) }
 
@@ -277,14 +280,22 @@ func (s *SearchService) live(ctx context.Context, q string) ([]ProviderSearch, I
 	q = strings.TrimSpace(q)
 	out := make([]ProviderSearch, len(s.Searchers))
 	found := make([][]Track, len(s.Searchers))
-	var wg sync.WaitGroup
+	type answer struct {
+		i      int
+		ps     ProviderSearch
+		tracks []Track
+	}
+	answers := make(chan answer, len(s.Searchers)) // buffered: late answers never block
+	asked := 0
 	for i, sr := range s.Searchers {
 		key := sr.Name() + "|" + Fold(q) // "KENZO  sitya" and "kenzo sitya" share an entry
 		if s.cached(key) {
 			out[i] = ProviderSearch{Provider: sr.Name(), Status: "cached"}
 			continue
 		}
-		wg.Go(func() {
+		asked++
+		out[i] = ProviderSearch{Provider: sr.Name(), Status: "timeout", Error: "no answer within " + s.Timeout.String()}
+		go func() {
 			start := time.Now()
 			cctx, cancel := context.WithTimeout(ctx, s.Timeout)
 			defer cancel()
@@ -296,19 +307,33 @@ func (s *SearchService) live(ctx context.Context, q string) ([]ProviderSearch, I
 			ps := ProviderSearch{Provider: sr.Name(), Status: "ok", Results: len(tracks), TookMs: time.Since(start).Milliseconds()}
 			switch {
 			case errors.Is(err, ErrUnavailable):
-				ps.Status, ps.Error = "skipped", err.Error()
+				ps.Status, ps.Error, tracks = "skipped", err.Error(), nil
 			case cctx.Err() == context.DeadlineExceeded:
-				ps.Status, ps.Error = "timeout", "no answer within "+s.Timeout.String()
+				ps.Status, ps.Error, tracks = "timeout", "no answer within "+s.Timeout.String(), nil
 			case err != nil:
-				ps.Status, ps.Error = "error", err.Error()
+				ps.Status, ps.Error, tracks = "error", err.Error(), nil
 			default:
 				s.remember(key)
-				found[i] = tracks
 			}
-			out[i] = ps
-		})
+			answers <- answer{i, ps, tracks}
+		}()
 	}
-	wg.Wait()
+	// Wait for the answers, but never much past the providers' timeout: a
+	// provider stuck outside its context (e.g. waiting on a busy database)
+	// must not hold the request. Its answer, if it comes, is dropped.
+	deadline := time.NewTimer(s.Timeout + 2*time.Second)
+	defer deadline.Stop()
+collect:
+	for range asked {
+		select {
+		case a := <-answers:
+			out[a.i], found[a.i] = a.ps, a.tracks
+		case <-deadline.C:
+			break collect
+		case <-ctx.Done():
+			break collect
+		}
+	}
 	var all []Track
 	for _, f := range found {
 		all = append(all, f...)
@@ -406,8 +431,19 @@ func (s *SearchService) Search(ctx context.Context, q Query) (Result, error) {
 			}
 		}
 		// Live results just ingested may change the total: count afresh then.
+		// A filtered list (text, genre, artist, provider) counts at most
+		// FilteredCountCap matches: an exact count of "pop" or "worship"
+		// walked tens of thousands of rows per request and, with many at
+		// once, starved the database for minutes. Nobody pages that far; the
+		// total reads "N+" past the cap (TotalCapped says so).
 		if res.Ingested.NewSongs > 0 || !s.Cache.Get(ctx, countKey, &res.Total) {
-			if err := db.Session(&gorm.Session{}).Count(&res.Total).Error; err != nil {
+			filtered := len(words) > 0 || q.Genre != "" || q.Artist != "" || q.Provider != ""
+			if filtered {
+				sub := db.Session(&gorm.Session{}).Select("1").Limit(FilteredCountCap)
+				if err := s.DB.Table("(?) AS capped", sub).Count(&res.Total).Error; err != nil {
+					return err
+				}
+			} else if err := db.Session(&gorm.Session{}).Count(&res.Total).Error; err != nil {
 				return err
 			}
 			s.Cache.Set(ctx, countKey, res.Total, s.CountTTL)

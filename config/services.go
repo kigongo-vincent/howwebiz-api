@@ -1,6 +1,8 @@
 package config
 
 import (
+	"context"
+	"fmt"
 	"log"
 	"log/slog"
 	"net"
@@ -42,14 +44,18 @@ func RegisterAppRoutes(deps Dependencies) {
 	v1 := deps.App.Group("/api/v1")
 
 	v1.Get("/health", func(c *fiber.Ctx) error {
-		sqlDB, err := deps.DB.DB()
-		if err != nil || sqlDB.Ping() != nil {
+		// the API pool, with a deadline: a starved or slow database makes
+		// this 503 (and the container unhealthy) instead of hanging
+		sqlDB, err := deps.API().DB()
+		pctx, cancel := context.WithTimeout(c.UserContext(), 3*time.Second)
+		defer cancel()
+		if err != nil || sqlDB.PingContext(pctx) != nil {
 			return base.API_FAIL(c, fiber.StatusServiceUnavailable, "database unreachable")
 		}
 		return c.JSON(base.APIResponse{Message: "ok"})
 	})
 
-	register := base.RouteRegister{DB: deps.DB, Router: v1}
+	register := base.RouteRegister{DB: deps.API(), Router: v1}
 	song.RouterRegister(&register)
 	genre.RouterRegister(&register)
 	chart.RouterRegister(&register)
@@ -124,17 +130,7 @@ func ConnectDB() *gorm.DB {
 		if len(missing) > 0 {
 			slog.Warn("database settings not set, using defaults: check the env file this process was started with", "missing", strings.Join(missing, ","))
 		}
-		// a URL, with every part escaped: an empty or odd password can't shift
-		// the other settings (in "key=value" form an empty password swallowed user=)
-		q := url.Values{"sslmode": {base.Env("DB_SSLMODE", "disable")}, "TimeZone": {"UTC"}}
-		dsn := (&url.URL{
-			Scheme:   "postgres",
-			User:     url.UserPassword(base.Env("DB_USER", "postgres"), os.Getenv("DB_PASSWORD")),
-			Host:     net.JoinHostPort(base.Env("DB_HOST", "localhost"), base.Env("DB_PORT", "5432")),
-			Path:     "/" + base.Env("DB_NAME", "howwebiz"),
-			RawQuery: q.Encode(),
-		}).String()
-		dial = postgres.New(postgres.Config{DSN: dsn, PreferSimpleProtocol: true})
+		dial = postgres.New(postgres.Config{DSN: postgresDSN(nil), PreferSimpleProtocol: true})
 	case "sqlite":
 		dial = sqlite.Open(base.Env("DB_PATH", "howwebiz.db") + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
 	default:
@@ -149,11 +145,12 @@ func ConnectDB() *gorm.DB {
 		if base.Env("DB_DRIVER", "postgres") == "sqlite" {
 			sqlDB.SetMaxOpenConns(1)
 		} else {
-			// a ceiling on connections: crawlers, ingest and the API together
-			// otherwise open as many as they like, and a small database (shared
-			// with other apps) spends its time switching between them. Past the
-			// ceiling, queries wait their turn in the app instead.
-			sqlDB.SetMaxOpenConns(base.EnvInt("DB_MAX_CONNS", 15))
+			// a ceiling on connections: crawlers, ingest and upkeep otherwise
+			// open as many as they like, and a small database (shared with
+			// other apps) spends its time switching between them. Past the
+			// ceiling, queries wait their turn in the app instead. The API has
+			// its own pool (ConnectAPIDB), so it never waits behind them.
+			sqlDB.SetMaxOpenConns(base.EnvInt("DB_MAX_CONNS", 12))
 			sqlDB.SetMaxIdleConns(5)
 			sqlDB.SetConnMaxIdleTime(5 * time.Minute)
 		}
@@ -189,6 +186,48 @@ func ConnectDB() *gorm.DB {
 	// Only the fast part here; indexes are built in the background once the
 	// API is listening (see Wire).
 	search.Setup(db)
+	return db
+}
+
+// postgresDSN builds the connection URL, every part escaped: an empty or
+// odd password can't shift the other settings (in "key=value" form an empty
+// password swallowed user=). extra adds query parameters.
+func postgresDSN(extra url.Values) string {
+	q := url.Values{"sslmode": {base.Env("DB_SSLMODE", "disable")}, "TimeZone": {"UTC"}}
+	for k, v := range extra {
+		q[k] = v
+	}
+	return (&url.URL{
+		Scheme:   "postgres",
+		User:     url.UserPassword(base.Env("DB_USER", "postgres"), os.Getenv("DB_PASSWORD")),
+		Host:     net.JoinHostPort(base.Env("DB_HOST", "localhost"), base.Env("DB_PORT", "5432")),
+		Path:     "/" + base.Env("DB_NAME", "howwebiz"),
+		RawQuery: q.Encode(),
+	}).String()
+}
+
+// ConnectAPIDB opens the API's own connection pool (DB_API_MAX_CONNS, 8):
+// crawlers, ingest and upkeep run on the other pool and can never take the
+// connections HTTP requests need (when they did, every request, health
+// included, waited with no end). Each statement here is capped by Postgres
+// (DB_API_STATEMENT_TIMEOUT, 15s): a slow database answers with an error,
+// never a hang. SQLite (one connection) shares bg.
+func ConnectAPIDB(bg *gorm.DB) *gorm.DB {
+	if bg.Dialector.Name() != "postgres" {
+		return bg
+	}
+	timeout := base.EnvDuration("DB_API_STATEMENT_TIMEOUT", 15*time.Second)
+	dsn := postgresDSN(url.Values{"options": {fmt.Sprintf("-c statement_timeout=%d", timeout.Milliseconds())}})
+	db, err := connectWithRetry(postgres.New(postgres.Config{DSN: dsn, PreferSimpleProtocol: true}),
+		&gorm.Config{Logger: gormlogger.Default.LogMode(logLevel())})
+	if err != nil {
+		log.Fatalf("api database pool: %v", err)
+	}
+	if sqlDB, err := db.DB(); err == nil {
+		sqlDB.SetMaxOpenConns(base.EnvInt("DB_API_MAX_CONNS", 8))
+		sqlDB.SetMaxIdleConns(4)
+		sqlDB.SetConnMaxIdleTime(5 * time.Minute)
+	}
 	return db
 }
 

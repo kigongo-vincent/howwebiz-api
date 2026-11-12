@@ -21,4 +21,14 @@ type Dependencies struct {
 	Catalog   *catalog.Service   // aggregated /songs
 	Sites     sitecrawl.Registry // generic HTML-site providers
 	Cache     *cache.Cache       // nil when REDIS_ENABLED=false
+	// APIDB is the HTTP requests' own pool (ConnectAPIDB); nil = DB.
+	APIDB *gorm.DB
+}
+
+// API is the pool HTTP handlers use.
+func (d Dependencies) API() *gorm.DB {
+	if d.APIDB != nil {
+		return d.APIDB
+	}
+	return d.DB
 }
