@@ -18,7 +18,6 @@ import (
 	"github.com/kigongo-vincent/howwebiz-api/modules/providers/hearthis"
 	"github.com/kigongo-vincent/howwebiz-api/modules/providers/incompetech"
 	"github.com/kigongo-vincent/howwebiz-api/modules/providers/internetarchive"
-	"github.com/kigongo-vincent/howwebiz-api/modules/providers/jamendo"
 	"github.com/kigongo-vincent/howwebiz-api/modules/providers/mdundo"
 	"github.com/kigongo-vincent/howwebiz-api/modules/providers/mzikii"
 	"github.com/kigongo-vincent/howwebiz-api/modules/providers/ncs"
@@ -41,7 +40,7 @@ func Wire(ctx context.Context, db *gorm.DB, app *fiber.App, background bool) Dep
 
 	ingester := &catalog.Ingester{DB: db,
 		Priority: base.EnvList("CATALOG_PROVIDER_PRIORITY", []string{"howwe", "ugamusic", "pearltunes", "mdundo", "momuziki",
-			"mzikii", "ugmuziki", "busoga", "audiocom", "audius", "jamendo", "fma", "ncs", "hearthis", "incompetech", "internetarchive"})}
+			"mzikii", "ugmuziki", "busoga", "audiocom", "audius", "fma", "ncs", "hearthis", "incompetech", "internetarchive"})}
 
 	ptCfg := sitecrawl.ConfigFromEnv("PEARLTUNES", "https://pearltunes.com")
 	// More Ugandan / African sources (see each package's doc for what it reads).
@@ -57,7 +56,6 @@ func Wire(ctx context.Context, db *gorm.DB, app *fiber.App, background bool) Dep
 	ugCfg := sitecrawl.ConfigFromEnv("UGAMUSIC", "https://ugamusic.net")
 	// Full-track APIs with worldwide catalogs (see README "Sources researched").
 	auCfg := sitecrawl.ConfigFromEnv("AUDIUS", "https://api.audius.co")
-	jaCfg := sitecrawl.ConfigFromEnv("JAMENDO", "https://api.jamendo.com")
 	iaCfg := sitecrawl.ConfigFromEnv("INTERNETARCHIVE", "https://archive.org")
 	// archive.org feeds cost one /metadata request per item: a daily page budget keeps the load modest.
 	iaCfg.Defaults.MaxPages = base.EnvInt("INTERNETARCHIVE_MAX_PAGES", 200)
@@ -79,7 +77,6 @@ func Wire(ctx context.Context, db *gorm.DB, app *fiber.App, background bool) Dep
 		audius.Name: sitecrawl.New(ctx, db, audius.Site{Base: auCfg.Web.BaseURL,
 			AppName: base.Env("AUDIUS_APP_NAME", "howwebiz"), Genres: base.EnvList("AUDIUS_GENRES", audius.Genres),
 			VerifiedOnly: base.EnvBool("AUDIUS_VERIFIED_ONLY", false)}, auCfg, ingester),
-		jamendo.Name: sitecrawl.New(ctx, db, jamendo.Site{Base: jaCfg.Web.BaseURL, ClientID: base.Env("JAMENDO_CLIENT_ID", "")}, jaCfg, ingester),
 		internetarchive.Name: sitecrawl.New(ctx, db, internetarchive.Site{Base: iaCfg.Web.BaseURL,
 			Collections: base.EnvList("INTERNETARCHIVE_COLLECTIONS", internetarchive.DefaultCollections),
 			Items:       base.EnvInt("INTERNETARCHIVE_ITEMS_PER_PAGE", 25)}, iaCfg, ingester),

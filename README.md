@@ -47,7 +47,6 @@ modules/providers/
   pearltunes/              parsers only
   ugamusic/                parsers only
   audius/                  API client only (Feeder + APISearcher)
-  jamendo/                 API client only (Feeder + APISearcher + Enabler)
   internetarchive/         API client only (Feeder + APISearcher)
 modules/{song,search,momuziki,audiocom}/catalog_adapter.go   existing providers → catalog ports
 config/wiring.go           composition root (also used by tests)
@@ -64,10 +63,9 @@ These carry **full-length tracks**, not 30-second previews, from artists in ever
 | Provider | Catalog | Feeds | Key | Terms |
 |---|---|---|---|---|
 | **audius** ([audius.co](https://audius.co)) | open artist uploads, millions of tracks | newest first per genre (`AUDIUS_GENRES`, + `all`); the search index stops at 10k per feed, so later runs read from the top until a page adds nothing new | none (`AUDIUS_APP_NAME` is sent) | Audius-hosted, with its own takedown process. Stream-gated tracks (premium/follow-gated: preview only) are skipped. `AUDIUS_VERIFIED_ONLY=true` keeps verified artists only (~5–10% of uploads, fewer re-uploads of others' music) |
-| **jamendo** ([jamendo.com](https://www.jamendo.com)) | ~600k Creative Commons tracks by independent artists | every track by ascending id (tail feed: resumes at its end) | **`JAMENDO_CLIENT_ID`** (free, [devportal.jamendo.com](https://devportal.jamendo.com)). Disabled until set (`412` on crawl, `skipped` in live search) | API terms §3.3: free for **non-commercial** use, commercial use needs a licence from Jamendo; §4.1: credit the artist + Jamendo and link the track page (`pageUrl`). CC licence per track |
 | **internetarchive** ([archive.org](https://archive.org)) | `netlabels` (~80k releases) and `etree`, the Live Music Archive (~300k concerts) (`INTERNETARCHIVE_COLLECTIONS`) | per collection, oldest added first (tail feed; the watermark re-anchors before advancedsearch's 10k cap); one `/metadata` request per item, one track per mp3 | none | per-item licences (mostly CC for netlabels; etree artists allow non-commercial distribution). Live recordings get a "(Live)" suffix so they stay separate from studio versions. Daily budget `INTERNETARCHIVE_MAX_PAGES=200` pages × 25 items |
 
-`audioUrl` is always a stable full-track URL: `api.audius.co/v1/tracks/{id}/stream` (302 to a content node, Range supported), Jamendo's `audio` stream, `archive.org/download/{item}/{file}.mp3`.
+`audioUrl` is always a stable full-track URL: `api.audius.co/v1/tracks/{id}/stream` (302 to a content node, Range supported), `archive.org/download/{item}/{file}.mp3`.
 
 Not added: Spotify, Apple Music, Deezer and YouTube Music APIs give 30-second previews or no audio at all, and their terms forbid storing or redistributing audio. SoundCloud's API is closed to new apps. Free Music Archive has no public API any more. ccMixter is mostly remixes and stems. The `georgeblood`/`78rpm` (Great 78) collections are excluded because record labels have contested their copyright.
 

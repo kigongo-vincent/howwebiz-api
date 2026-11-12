@@ -16,7 +16,6 @@ info:
     | [pearltunes.com](https://pearltunes.com) | HTML pages (generic site crawler) | providers |
     | [ugamusic.net](https://ugamusic.net) | HTML pages with embedded page data (generic site crawler) | providers |
     | [audius.co](https://audius.co) | Public REST API, no key: full-length streams, worldwide, per-genre feeds | providers |
-    | [jamendo.com](https://www.jamendo.com) | Official API v3.0 (needs `JAMENDO_CLIENT_ID`, non-commercial terms): Creative Commons tracks worldwide | providers |
     | [archive.org](https://archive.org) | Advanced search + metadata API: netlabel releases and the Live Music Archive | providers |
 
     **Responses** use one envelope: `{ "data": …, "msg": "…", "pagination": {…}, "meta": {…} }`.
@@ -33,7 +32,7 @@ tags:
   - name: songs
     description: The aggregated catalog — one entry per song across every provider
   - name: providers
-    description: Registered providers, and crawl control for the generic site/API providers (pearltunes, ugamusic, audius, jamendo, internetarchive)
+    description: Registered providers, and crawl control for the generic site/API providers (pearltunes, ugamusic, mdundo, mzikii, ugmuziki, busoga, fma, hearthis, ncs, incompetech, audius, internetarchive)
   - name: system
   - name: howwe
     description: howwe.ug songs, charts, genres and search
@@ -422,7 +421,7 @@ paths:
       tags: [songs]
       summary: Songs from every provider, merged — the main entry point
       description: |
-        One entry per song across howwe.ug, ugamusic.net, pearltunes.com, momuziki.com, audio.com, audius.co, jamendo.com and archive.org.
+        One entry per song across howwe.ug, ugamusic.net, pearltunes.com, momuziki.com, audio.com, audius.co, archive.org and the other registered providers (see /providers).
         **Only songs with an audio URL are stored and served.**
         Copies are matched on normalized primary artist + title (case, accents, punctuation, "(Official Audio)",
         "ft. …" ignored; remix/live/acoustic versions kept apart).
@@ -434,7 +433,7 @@ paths:
         - { name: q, in: query, description: 'Title, artist or featured artist (accent/punctuation-insensitive; all words must match).', schema: { type: string } }
         - { name: artist, in: query, description: Primary artist, schema: { type: string } }
         - { name: genre, in: query, schema: { type: string } }
-        - { name: provider, in: query, description: Only songs available from this provider, schema: { type: string, enum: [howwe, ugamusic, pearltunes, mdundo, momuziki, mzikii, ugmuziki, busoga, audiocom, audius, jamendo, fma, ncs, hearthis, incompetech, internetarchive] } }
+        - { name: provider, in: query, description: Only songs available from this provider, schema: { type: string, enum: [howwe, ugamusic, pearltunes, mdundo, momuziki, mzikii, ugmuziki, busoga, audiocom, audius, fma, ncs, hearthis, incompetech, internetarchive] } }
         - { name: type, in: query, schema: { type: string, enum: [song, mix, all], default: song }, description: 'song: songs only. mix: DJ mixes, nonstops and mixtapes (flagged by the provider, titled like one, or 25+ minutes long). all: both.' }
         - $ref: '#/components/parameters/HasAudio'
         - { name: sort, in: query, schema: { type: string, enum: [relevance, recent, plays, title] }, description: 'Default: relevance with q, else recent.' }
@@ -560,7 +559,7 @@ paths:
       summary: Crawl state of a generic site/API provider
       description: '`data`: provider, cursor (phase listing|sweep|synced, nextPage, sweepNextId), complete, songs, withAudio, highestId, capabilities (listing, songPagesById, sitemap, search, feeds), enabled, feeds (per feed: feed, cursor, walkDoneAt, pages, tracks, lastSyncAt), running, lastRun, defaults, guard {paused, pausedUntil, health}.'
       parameters:
-        - { name: name, in: path, required: true, schema: { type: string, enum: [pearltunes, ugamusic, audius, jamendo, internetarchive] } }
+        - { name: name, in: path, required: true, schema: { type: string, enum: [pearltunes, ugamusic, mdundo, mzikii, ugmuziki, busoga, fma, hearthis, ncs, incompetech, audius, internetarchive] } }
       responses:
         '200': { $ref: '#/components/responses/Status' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -568,10 +567,10 @@ paths:
     post:
       tags: [providers]
       summary: 🔒 Advance a generic site/API crawl (resumable)
-      description: Listing to its end → (sites with song pages by id) fetch every id not yet stored with audio, then probe ahead → (API providers) walk every feed (genre/collection) from its stored cursor; newest-first feeds later read from the top until a page adds nothing new, oldest-first feeds resume at their tail. `maxPages` counts listing and feed pages. Omitted fields use <PROVIDER>_* defaults. **412** when the provider needs configuration (e.g. `JAMENDO_CLIENT_ID`).
+      description: Listing to its end → (sites with song pages by id) fetch every id not yet stored with audio, then probe ahead → (API providers) walk every feed (genre/collection) from its stored cursor; newest-first feeds later read from the top until a page adds nothing new, oldest-first feeds resume at their tail. `maxPages` counts listing and feed pages. Omitted fields use <PROVIDER>_* defaults. **412** when the provider needs configuration it does not have.
       security: [{ ApiKey: [] }]
       parameters:
-        - { name: name, in: path, required: true, schema: { type: string, enum: [pearltunes, ugamusic, audius, jamendo, internetarchive] } }
+        - { name: name, in: path, required: true, schema: { type: string, enum: [pearltunes, ugamusic, mdundo, mzikii, ugmuziki, busoga, fma, hearthis, ncs, incompetech, audius, internetarchive] } }
       requestBody:
         required: false
         content: { application/json: { schema: { $ref: '#/components/schemas/SiteCrawlRequest' } } }
@@ -581,7 +580,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Busy' }
-        '412': { description: 'Provider not configured (e.g. JAMENDO_CLIENT_ID unset)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '412': { description: 'Provider not configured (it needs settings it does not have)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '503': { $ref: '#/components/responses/Paused' }
   /api/v1/providers/{name}/guard/reset:
     post:
@@ -589,7 +588,7 @@ paths:
       summary: 🔒 Clear a provider's block-counter pause
       security: [{ ApiKey: [] }]
       parameters:
-        - { name: name, in: path, required: true, schema: { type: string, enum: [pearltunes, ugamusic, audius, jamendo, internetarchive] } }
+        - { name: name, in: path, required: true, schema: { type: string, enum: [pearltunes, ugamusic, mdundo, mzikii, ugmuziki, busoga, fma, hearthis, ncs, incompetech, audius, internetarchive] } }
       responses:
         '200': { description: Reset, content: { application/json: { schema: { $ref: '#/components/schemas/Message' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
