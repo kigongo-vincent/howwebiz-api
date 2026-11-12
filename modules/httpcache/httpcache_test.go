@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http/httptest"
+	"net/url"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -21,7 +22,8 @@ func setup(t *testing.T) (*fiber.App, *atomic.Bool, *atomic.Int32, *cache.Cache)
 	calls := &atomic.Int32{}
 	app := fiber.New()
 	v1 := app.Group("/api/v1")
-	v1.Use(New(Options{Cache: c, Prefixes: []string{"/api/v1/songs"}, Skip: []string{"/status"}, FreshTTL: time.Minute}))
+	v1.Use(New(Options{Cache: c, Prefixes: []string{"/api/v1/songs"}, Skip: []string{"/status"}, FreshTTL: time.Minute,
+		Shuffled: func(path string, q url.Values) bool { return q.Get("sort") == "discover" && q.Get("seed") == "" }}))
 	v1.Get("/songs", func(ctx *fiber.Ctx) error {
 		calls.Add(1)
 		if fail.Load() {
@@ -97,5 +99,23 @@ func TestWarmerRebuildsHotPages(t *testing.T) {
 	}
 	if _, how, body := get(t, app, "/api/v1/songs?q=hot"); how != "HIT" || body != `{"n":3,"q":"hot"}` {
 		t.Fatalf("after warm: %q %s", how, body)
+	}
+}
+
+func TestShuffledNeverServedFresh(t *testing.T) {
+	app, fail, calls, _ := setup(t)
+	get(t, app, "/api/v1/songs?sort=discover")
+	if _, how, _ := get(t, app, "/api/v1/songs?sort=discover"); how != "MISS" || calls.Load() != 2 {
+		t.Fatalf("an unseeded shuffle was served from cache: %q, %d calls", how, calls.Load())
+	}
+	// with a seed, the same shuffle is cacheable
+	get(t, app, "/api/v1/songs?sort=discover&seed=abc")
+	if _, how, _ := get(t, app, "/api/v1/songs?sort=discover&seed=abc"); how != "HIT" {
+		t.Fatalf("seeded shuffle: %q", how)
+	}
+	// still a stale fallback when the database fails
+	fail.Store(true)
+	if st, how, _ := get(t, app, "/api/v1/songs?sort=discover"); st != 200 || how != "STALE" {
+		t.Fatalf("stale fallback: %d %q", st, how)
 	}
 }

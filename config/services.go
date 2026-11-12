@@ -273,7 +273,22 @@ func HTTPCacheOptions(deps Dependencies) httpcache.Options {
 		Prefixes: []string{"/api/v1/songs", "/api/v1/lists", "/api/v1/charts", "/api/v1/genres",
 			"/api/v1/providers", "/api/v1/howwe/", "/api/v1/momuziki/songs", "/api/v1/momuziki/categories",
 			"/api/v1/momuziki/search"},
-		Skip:     []string{"/status"},
+		Skip: []string{"/status"},
+		// shuffles without a seed: a new order on every request
+		Shuffled: func(path string, q url.Values) bool {
+			if q.Get("seed") != "" {
+				return false
+			}
+			switch {
+			case path == "/api/v1/songs":
+				sort := q.Get("sort")
+				return sort == "discover" || (sort == "" && strings.TrimSpace(q.Get("q")) == "" &&
+					q.Get("provider") == "" && q.Get("hasAudio") == "")
+			case path == "/api/v1/songs/recommend", strings.HasSuffix(path, "/next") && strings.HasPrefix(path, "/api/v1/songs/"):
+				return true
+			}
+			return false
+		},
 		FreshTTL: base.EnvDuration("HTTP_CACHE_TTL", 2*time.Minute),
 		StaleTTL: base.EnvDuration("HTTP_CACHE_STALE_TTL", 24*time.Hour),
 	}

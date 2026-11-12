@@ -31,8 +31,10 @@ info:
 
     **Discovery**: `GET /api/v1/songs?sort=discover` is a shuffled feed for home screens and radio,
     `GET /api/v1/songs/{id}/next` is up next after a song, and `GET /api/v1/songs/recommend` builds a list
-    from seeds (songs, artists, genres). All are weighted at random, so they change between seeds but stay
-    ordered by fit. Pass the returned `meta.seed` back to page through one feed or to replay a list exactly.
+    from seeds (songs, artists, genres). All are weighted at random: **every call without `seed` gives a new
+    order** (better songs still come up more often), so a refresh shows something new. Each response returns
+    its `meta.seed`: send it back as `?seed=` to load the next page of the same shuffle (no repeats across
+    pages) or to replay a list exactly. Browsing `/songs` without `q` is this shuffled feed by default.
 
     ### Getting good recommendations (read this)
     Recommendations come from a **taste profile**, not from names: genre mix, artists and their collaborators,
@@ -470,7 +472,9 @@ paths:
           in: query
           schema: { type: string, enum: [relevance, recent, plays, title, discover] }
           description: |
-            Default: relevance with q, else recent.
+            Default: **relevance** with `q`; **discover** without `q` (a fresh shuffle on every request, so a
+            home/browse list changes each visit); **recent** when `provider` or `hasAudio` is set. Ask for
+            `sort=recent` for the plain newest-first list.
             **discover**: a weighted shuffle of the catalog (not with `q`). Each song's chance of an early place
             grows with its popularity (plays), reach (how many providers carry it), freshness (release, or when
             first seen; halves about every three weeks) and, with `region`, being from that region. Pools: the
@@ -478,7 +482,7 @@ paths:
             out: never twice within three places, at most two per twenty. Combines with `genre`, `artist`, `type`.
             The feed holds up to 600 songs; `pagination.total` is its size. Page with the same `seed`.
         - { name: region, in: query, schema: { type: string, enum: [ug, ke, tz, rw, ng, gh, za, africa, global] }, description: 'With sort=discover: favour songs from this region (by the providers that carry them and by genre: Bongo Flava = tz, Amapiano = za, Highlife = gh, Kapuka/Genge = ke, …). africa covers every African region.' }
-        - { name: seed, in: query, schema: { type: string }, description: 'With sort=discover: any text. The same seed (and filters) gives the same feed, so pages never overlap or repeat. Default: one feed per hour (returned in meta.seed: send it with the next pages).' }
+        - { name: seed, in: query, schema: { type: string }, description: 'With sort=discover: any text. The same seed (and filters) gives the same feed, so pages never overlap or repeat. Without a seed, page 1 is a new shuffle on every request; its seed is in meta.seed: **send it with the next pages** (?seed=) so they continue the same shuffle without repeats.' }
         - { name: live, in: query, schema: { type: string, enum: [auto, 'true', 'false'], default: auto } }
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/Limit'
@@ -542,7 +546,7 @@ paths:
         - { name: limit, in: query, schema: { type: integer, default: 20, minimum: 1, maximum: 50 } }
         - { name: history, in: query, schema: { type: string, example: '640,77' }, description: 'Song ids played before this one, newest first (up to 50; the last 9 shape the taste). Never suggested again.' }
         - { name: region, in: query, schema: { type: string, enum: [ug, ke, tz, rw, ng, gh, za, africa, global] }, description: "Favour this region (default: the song's own)." }
-        - { name: seed, in: query, schema: { type: string }, description: 'Any text: the same seed gives the same list. Default: changes every hour (returned in meta.seed).' }
+        - { name: seed, in: query, schema: { type: string }, description: 'Any text: the same seed gives the same list. Default: a new list on every call (its seed is in meta.seed; send it back to get the same list again).' }
         - { name: exclude, in: query, schema: { type: string, example: '12,345,6789' }, description: Comma-separated song ids never to suggest (skipped, disliked; up to 200). }
       responses:
         '200':
@@ -591,7 +595,7 @@ paths:
         - { name: exclude, in: query, schema: { type: string }, description: Song ids never to suggest (up to 200). }
         - { name: type, in: query, schema: { type: string, enum: [song, mix] }, description: "Default: the first seed song's type, else song." }
         - { name: limit, in: query, schema: { type: integer, default: 20, minimum: 1, maximum: 50 } }
-        - { name: seed, in: query, schema: { type: string }, description: 'Any text: the same seed gives the same list. Default: changes every hour (in meta.seed).' }
+        - { name: seed, in: query, schema: { type: string }, description: 'Any text: the same seed gives the same list. Default: a new list on every call (its seed is in meta.seed; send it back to get the same list again).' }
       responses:
         '200':
           description: Recommended songs, best first

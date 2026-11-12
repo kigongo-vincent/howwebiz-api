@@ -20,6 +20,7 @@ package catalog
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"slices"
 	"strings"
@@ -175,15 +176,61 @@ func (s *SearchService) buildProfile(ctx context.Context, q RecommendQuery, now 
 	return p, seeds, nil
 }
 
+// recPool: a scored candidate pool and the seed artists (cached).
+type recPool struct {
+	Items   []cachedScored     `json:"i"`
+	Artists map[string]float64 `json:"a"`
+}
+
 // Recommend returns songs that fit the seeds' taste profile, best first.
+// The scored pool is cached for poolTTL; each call shuffles it with its
+// own seed, so every request can get a different list for free.
 func (s *SearchService) Recommend(ctx context.Context, q RecommendQuery) ([]Song, error) {
+	pop := ""
+	if q.Popularity != nil {
+		pop = fmt.Sprint(*q.Popularity)
+	}
+	key := "recommend:" + s.Cache.Generation(ctx, cacheNS) + ":" + cacheKey(fmt.Sprint(q.Songs), fmt.Sprint(q.Artists),
+		fmt.Sprint(q.Genres), q.Region, q.MinYear, q.MaxYear, pop, fmt.Sprint(q.Exclude), q.Kind)
+	var rp recPool
+	if !s.Cache.Get(ctx, key, &rp) {
+		items, artists, err := s.recommendPool(ctx, q)
+		if err != nil {
+			return nil, err
+		}
+		rp = recPool{toCache(items), artists}
+		s.Cache.Set(ctx, key, rp, poolTTL)
+	}
+	ordered := spreadArtists(weightedShuffle(fromCache(rp.Items), q.Seed), 4, 1, 10)
+	// a seed artist: at most two songs in a list
+	var out []Song
+	perSeedArtist := map[string]int{}
+	for _, c := range ordered {
+		a := artistKey(c)
+		if rp.Artists[a] > 0 {
+			if perSeedArtist[a] == 2 {
+				continue
+			}
+			perSeedArtist[a]++
+		}
+		out = append(out, c)
+		if len(out) == q.Limit {
+			break
+		}
+	}
+	songs, _, err := s.withSources(ctx, out)
+	return songs, err
+}
+
+// recommendPool builds the profile, reads the candidate pools and scores them.
+func (s *SearchService) recommendPool(ctx context.Context, q RecommendQuery) ([]scored, map[string]float64, error) {
 	now := time.Now().UTC()
 	p, seeds, err := s.buildProfile(ctx, q, now)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(seeds) == 0 && len(q.Songs) > 0 && len(q.Artists) == 0 && len(q.Genres) == 0 {
-		return nil, gorm.ErrRecordNotFound
+		return nil, nil, gorm.ErrRecordNotFound
 	}
 	kind := q.Kind
 	if kind == "" {
@@ -267,7 +314,7 @@ func (s *SearchService) Recommend(ctx context.Context, q RecommendQuery) ([]Song
 	}
 	pl.add(base().Order("first_seen_at DESC").Order("id DESC").Limit(60))
 	if pl.err != nil {
-		return nil, pl.err
+		return nil, nil, pl.err
 	}
 
 	items := make([]scored, 0, len(pl.all))
@@ -277,25 +324,7 @@ func (s *SearchService) Recommend(ctx context.Context, q RecommendQuery) ([]Song
 		}
 		items = append(items, scored{c, p.score(c, now)})
 	}
-	ordered := spreadArtists(weightedShuffle(items, q.Seed), 4, 1, 10)
-	// a seed artist: at most two songs in a list
-	var out []Song
-	perSeedArtist := map[string]int{}
-	for _, c := range ordered {
-		a := artistKey(c)
-		if p.artists[a] > 0 {
-			if perSeedArtist[a] == 2 {
-				continue
-			}
-			perSeedArtist[a]++
-		}
-		out = append(out, c)
-		if len(out) == q.Limit {
-			break
-		}
-	}
-	songs, _, err := s.withSources(ctx, out)
-	return songs, err
+	return items, p.artists, nil
 }
 
 // score: how well c fits the profile (squared: close songs clearly first).

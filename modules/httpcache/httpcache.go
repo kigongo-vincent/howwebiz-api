@@ -38,6 +38,10 @@ type Options struct {
 	FreshTTL time.Duration // default 2m
 	StaleTTL time.Duration // default 24h
 	MaxBody  int           // bytes; larger responses are not stored (default 1 MiB)
+	// Shuffled reports requests whose answer must differ every time (a
+	// random order): never served from the fresh copy (nor warmed), but
+	// still kept as the stale fallback.
+	Shuffled func(path string, query url.Values) bool
 }
 
 const (
@@ -138,7 +142,12 @@ func New(o Options) fiber.Handler {
 		ctx := c.UserContext()
 		k := key(c.Path(), c.Request().URI().QueryString())
 		warming := c.Get(warmHeader) == warmToken
-		if !warming {
+		shuffled := false
+		if o.Shuffled != nil {
+			qv, _ := url.ParseQuery(string(c.Request().URI().QueryString()))
+			shuffled = o.Shuffled(c.Path(), qv)
+		}
+		if !warming && !shuffled {
 			o.Cache.ZIncr(ctx, hotKey(time.Now()), k, hotTTL)
 			if b, ok := o.Cache.GetBytes(ctx, "http:fresh:"+k); ok && serve(c, b, "HIT") {
 				return nil
@@ -151,7 +160,9 @@ func New(o Options) fiber.Handler {
 			body := c.Response().Body()
 			if strings.HasPrefix(ct, fiber.MIMEApplicationJSON) && len(body) <= o.MaxBody {
 				e := encode(status, ct, body)
-				o.Cache.SetBytes(ctx, "http:fresh:"+k, e, o.FreshTTL)
+				if !shuffled {
+					o.Cache.SetBytes(ctx, "http:fresh:"+k, e, o.FreshTTL)
+				}
 				o.Cache.SetBytes(ctx, "http:stale:"+k, e, o.StaleTTL)
 			}
 			c.Set("X-Cache", "MISS")

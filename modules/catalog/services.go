@@ -1,6 +1,8 @@
 package catalog
 
 import (
+	crand "crypto/rand"
+	"encoding/hex"
 	"errors"
 	"slices"
 	"strconv"
@@ -40,11 +42,12 @@ var types = []string{KindSong, KindMix, "all"}
 //	?artist=    primary artist
 //	?genre=  ?provider=  ?hasAudio=
 //	?type=      song (default) | mix (DJ mixes, nonstops, mixtapes) | all
-//	?sort=      relevance (default with q) | recent | plays | title | discover
+//	?sort=      relevance (default with q) | discover (default without q) | recent | plays | title
 //	            discover: a weighted shuffle (popularity, reach, freshness,
 //	            region), artists spread out; not with q
 //	?region=    ug | ke | tz | rw | ng | gh | za | africa | global (discover: in-region songs come up more)
-//	?seed=      discover: any text; the same seed gives the same feed (page with it)
+//	?seed=      discover: any text; the same seed gives the same feed. Without one, page 1
+//	            is shuffled afresh on every request: send its meta.seed with the next pages
 //	?live=      auto (default: the catalog answers; providers are asked live only when that answer is weak) | true | false
 //	?page= ?limit=
 func (s *Service) List(c *fiber.Ctx) error {
@@ -53,6 +56,12 @@ func (s *Service) List(c *fiber.Ctx) error {
 		Sort: c.Query("sort"), Page: p.Page, Limit: p.Limit, Live: LiveMode(c.Query("live", string(LiveAuto)))}
 	if q.Sort != "" && !slices.Contains(sorts, q.Sort) {
 		return base.API_ERROR(c, "sort must be one of: "+strings.Join(sorts, ", "))
+	}
+	// Browsing (no text) is a shuffled feed unless an order is asked for:
+	// the same list on every visit made the app look frozen. Filters the
+	// feed doesn't support (provider, hasAudio) keep the plain list.
+	if q.Sort == "" && strings.TrimSpace(q.Q) == "" && q.Provider == "" && c.Query("hasAudio") == "" {
+		q.Sort = "discover"
 	}
 	q.Type = c.Query("type", KindSong)
 	if !slices.Contains(types, q.Type) {
@@ -81,8 +90,12 @@ func (s *Service) List(c *fiber.Ctx) error {
 		}
 		seed := c.Query("seed")
 		if seed == "" {
-			// one feed per hour by default: pages of it line up, and it changes over the day
-			seed = time.Now().UTC().Format("2006010215")
+			// page 1: a fresh shuffle every time; later pages without the
+			// seed: the hour's feed (send meta.seed to page one shuffle)
+			seed = freshSeed()
+			if p.Page > 1 {
+				seed = time.Now().UTC().Format("2006010215")
+			}
 		}
 		songs, total, err := s.Search.Discover(c.UserContext(), DiscoverQuery{Genre: q.Genre, Artist: q.Artist, Region: region,
 			Kind: q.Type, Seed: SeedFor(seed, region, q.Genre, q.Artist, q.Type), Page: p.Page, Limit: p.Limit})
@@ -235,7 +248,7 @@ func (s *Service) Next(c *fiber.Ctx) error {
 	exclude, history := idList(c.Query("exclude"), 200), idList(c.Query("history"), 50)
 	seed := c.Query("seed")
 	if seed == "" {
-		seed = time.Now().UTC().Format("2006010215")
+		seed = freshSeed() // a new list every time unless a seed is sent
 	}
 	song, songs, err := s.Search.Next(c.UserContext(), id, NextQuery{Region: region, Limit: limit, Exclude: exclude,
 		History: history, Seed: SeedFor(seed, strconv.FormatUint(uint64(id), 10), region, c.Query("history"))})
@@ -313,7 +326,7 @@ func (s *Service) Recommend(c *fiber.Ctx) error {
 	}
 	seed := c.Query("seed")
 	if seed == "" {
-		seed = time.Now().UTC().Format("2006010215")
+		seed = freshSeed() // a new list every time unless a seed is sent
 	}
 	q.Seed = SeedFor(seed, c.Query("songs"), c.Query("artists"), c.Query("genres"), q.Region)
 	songs, err := s.Search.Recommend(c.UserContext(), q)
@@ -326,4 +339,12 @@ func (s *Service) Recommend(c *fiber.Ctx) error {
 		s.orderSources(&songs[i])
 	}
 	return c.JSON(base.APIResponse{Data: songs, Meta: fiber.Map{"seed": seed}})
+}
+
+// freshSeed: a random seed, returned in meta.seed so a client can replay
+// or page the same shuffle.
+func freshSeed() string {
+	var b [6]byte
+	_, _ = crand.Read(b[:])
+	return hex.EncodeToString(b[:])
 }

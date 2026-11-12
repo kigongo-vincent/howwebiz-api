@@ -198,6 +198,35 @@ type scored struct {
 	w    float64
 }
 
+// cachedScored is scored as stored in Redis (Song.Key isn't serialised).
+type cachedScored struct {
+	Song Song    `json:"s"`
+	Key  string  `json:"k"`
+	W    float64 `json:"w"`
+}
+
+func toCache(items []scored) []cachedScored {
+	out := make([]cachedScored, len(items))
+	for i, it := range items {
+		out[i] = cachedScored{it.song, it.song.Key, it.w}
+	}
+	return out
+}
+
+func fromCache(items []cachedScored) []scored {
+	out := make([]scored, len(items))
+	for i, it := range items {
+		it.Song.Key = it.Key
+		out[i] = scored{it.Song, it.W}
+	}
+	return out
+}
+
+// poolTTL: how long a scored candidate pool is reused. Building one is a
+// handful of queries; shuffling it is free, so every request can get its
+// own order without touching the database.
+const poolTTL = 5 * time.Minute
+
 // weightedShuffle orders songs at random, each one's chance of an early
 // place growing with its weight.
 func weightedShuffle(items []scored, seed uint64) []Song {
@@ -308,6 +337,37 @@ const discoverPool = 600
 // mixes artists; the same seed gives the same feed.
 func (s *SearchService) Discover(ctx context.Context, q DiscoverQuery) ([]Song, int64, error) {
 	now := time.Now().UTC()
+	key := "discover:" + s.Cache.Generation(ctx, cacheNS) + ":" + cacheKey(q.Genre, q.Artist, q.Region, q.Kind)
+	var cached []cachedScored
+	var items []scored
+	if s.Cache.Get(ctx, key, &cached) {
+		items = fromCache(cached)
+	} else {
+		var err error
+		if items, err = s.discoverPool(ctx, q, now); err != nil {
+			return nil, 0, err
+		}
+		s.Cache.Set(ctx, key, toCache(items), poolTTL)
+	}
+	ordered := weightedShuffle(items, q.Seed)
+	if q.Artist == "" {
+		ordered = spreadArtists(ordered, 3, 2, 20)
+	}
+	if len(ordered) > discoverPool {
+		ordered = ordered[:discoverPool]
+	}
+	total := int64(len(ordered))
+	from := (q.Page - 1) * q.Limit
+	if from >= len(ordered) {
+		return []Song{}, total, nil
+	}
+	page := ordered[from:min(from+q.Limit, len(ordered))]
+	songs, _, err := s.withSources(ctx, page)
+	return songs, total, err
+}
+
+// discoverPool reads and scores a feed's candidates (see Discover).
+func (s *SearchService) discoverPool(ctx context.Context, q DiscoverQuery, now time.Time) ([]scored, error) {
 	base := func() *gorm.DB {
 		db := s.DB.WithContext(ctx).Model(&Song{}).Where("audio_url <> ''")
 		if q.Kind != "all" {
@@ -328,7 +388,8 @@ func (s *SearchService) Discover(ctx context.Context, q DiscoverQuery) ([]Song, 
 		// the long tail: a random stretch of the catalog (a primary-key range)
 		var maxID uint
 		if err := s.DB.WithContext(ctx).Model(&Song{}).Select("COALESCE(MAX(id), 0)").Scan(&maxID).Error; err == nil && maxID > 0 {
-			r := rand.New(rand.NewPCG(q.Seed, 7))
+			// a new stretch every pool (not per seed: the pool is shared)
+			r := rand.New(rand.NewPCG(uint64(now.UnixNano()), 7))
 			from := uint(r.Uint64N(uint64(maxID))) + 1
 			p.add(base().Where("id >= ?", from).Order("id").Limit(120))
 		}
@@ -343,7 +404,7 @@ func (s *SearchService) Discover(ctx context.Context, q DiscoverQuery) ([]Song, 
 		}
 	}
 	if p.err != nil {
-		return nil, 0, p.err
+		return nil, p.err
 	}
 	items := make([]scored, 0, len(p.all))
 	for _, c := range p.all {
@@ -353,20 +414,7 @@ func (s *SearchService) Discover(ctx context.Context, q DiscoverQuery) ([]Song, 
 		}
 		items = append(items, scored{c, w})
 	}
-	ordered := weightedShuffle(items, q.Seed)
-	if q.Artist == "" {
-		ordered = spreadArtists(ordered, 3, 2, 20)
-	}
-	if len(ordered) > discoverPool {
-		ordered = ordered[:discoverPool]
-	}
-	total := int64(len(ordered))
-	from := (q.Page - 1) * q.Limit
-	if from >= len(ordered) {
-		return []Song{}, total, nil
-	}
-	page := ordered[from:min(from+q.Limit, len(ordered))]
-	return s.withSources(ctx, page)
+	return items, nil
 }
 
 // withSources loads the sources of a page of songs, keeping its order.

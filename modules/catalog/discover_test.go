@@ -6,6 +6,9 @@ import (
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/kigongo-vincent/howwebiz-api/modules/cache"
 )
 
 func seedCatalog(t *testing.T) *SearchService {
@@ -257,5 +260,41 @@ func TestRecommendPopularityTarget(t *testing.T) {
 	}
 	if hits, deep := avg(100), avg(0); hits <= deep {
 		t.Fatalf("popularity=100 should lean to hits: %.2f vs %.2f", hits, deep)
+	}
+}
+
+// The scored pool is cached; every request shuffles it with its own seed.
+func TestShufflesReuseCachedPool(t *testing.T) {
+	s := seedCatalog(t)
+	mr := miniredis.RunT(t)
+	s.Cache = cache.New(mr.Addr(), "t:")
+	ctx := context.Background()
+	first, _, err := s.Discover(ctx, DiscoverQuery{Kind: KindSong, Seed: 1, Page: 1, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// the database changes, but within poolTTL the pool doesn't
+	s.DB.Exec("UPDATE catalog_songs SET audio_url = '' WHERE genre = 'Jazz'")
+	again, _, err := s.Discover(ctx, DiscoverQuery{Kind: KindSong, Seed: 1, Page: 1, Limit: 10})
+	if err != nil || !slices.EqualFunc(first, again, func(a, b Song) bool { return a.ID == b.ID }) {
+		t.Fatalf("same seed, cached pool: want the same page (%v)", err)
+	}
+	if artistKey(again[0]) == "" {
+		t.Fatal("artist key lost in the cache")
+	}
+	other, _, _ := s.Discover(ctx, DiscoverQuery{Kind: KindSong, Seed: 2, Page: 1, Limit: 10})
+	if slices.EqualFunc(first, other, func(a, b Song) bool { return a.ID == b.ID }) {
+		t.Fatal("another seed should shuffle the cached pool differently")
+	}
+	// recommendations too
+	var sd Song
+	s.DB.Where("title = ?", "Sitya Loss").First(&sd)
+	r1, err := s.Recommend(ctx, RecommendQuery{Songs: []uint{sd.ID}, Seed: 1, Limit: 8})
+	if err != nil || len(r1) == 0 {
+		t.Fatalf("recommend: %v", err)
+	}
+	r2, _ := s.Recommend(ctx, RecommendQuery{Songs: []uint{sd.ID}, Seed: 2, Limit: 8})
+	if slices.EqualFunc(r1, r2, func(a, b Song) bool { return a.ID == b.ID }) {
+		t.Fatal("recommend: another seed should give another order")
 	}
 }
