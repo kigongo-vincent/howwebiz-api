@@ -117,7 +117,8 @@ func WireAPI(ctx context.Context, db, apiDB *gorm.DB, app *fiber.App, background
 	indexer := &catalog.Indexer{DB: db, Ingester: ingester, Stores: stores, Batch: 500}
 	apiIngester := &catalog.Ingester{DB: apiDB, Priority: ingester.Priority} // live-search results, in the request
 	searchSvc := &catalog.SearchService{DB: apiDB, Ingester: apiIngester, Searchers: searchers,
-		Timeout:       base.EnvDuration("CATALOG_LIVE_TIMEOUT", 8*time.Second),
+		Timeout:       base.EnvDuration("CATALOG_LIVE_TIMEOUT", 6*time.Second),
+		Budget:        base.EnvDuration("CATALOG_SEARCH_BUDGET", 10*time.Second),
 		CacheTTL:      base.EnvDuration("CATALOG_LIVE_CACHE_TTL", 15*time.Minute),
 		Cache:         rc,
 		ResultTTL:     base.EnvDuration("CATALOG_RESULT_CACHE_TTL", 60*time.Second),

@@ -343,3 +343,35 @@ func TestClipLongFields(t *testing.T) {
 		t.Fatal("short value changed")
 	}
 }
+
+// A slow provider never pushes a search past its budget (a gateway in
+// front times out first otherwise): the live search gets what's left, and
+// the catalog's own answer is returned.
+type stuckSearcher struct{ name string }
+
+func (f *stuckSearcher) Name() string { return f.name }
+func (f *stuckSearcher) Search(ctx context.Context, q string, _ int) ([]Track, error) {
+	time.Sleep(30 * time.Second) // ignores its context, like a provider stuck on a busy database
+	return nil, nil
+}
+
+func TestSearchStaysWithinBudget(t *testing.T) {
+	db := testDB(t)
+	in := &Ingester{DB: db}
+	if _, err := in.Ingest([]Track{{Provider: "p", ExternalID: "1", Title: "Lock Down", Artist: "Someone", AudioURL: "u"}}, t0); err != nil {
+		t.Fatal(err)
+	}
+	s := &SearchService{DB: db, Ingester: in, Timeout: 20 * time.Second, Budget: 4 * time.Second,
+		Searchers: []Searcher{&stuckSearcher{name: "stuck"}}}
+	start := time.Now()
+	res, err := s.Search(context.Background(), Query{Q: "lock dwn", Limit: 10, Live: LiveAuto})
+	if took := time.Since(start); took > 4500*time.Millisecond {
+		t.Fatalf("search took %s, budget 4s", took)
+	}
+	if err != nil || len(res.Songs) == 0 || res.Songs[0].Title != "Lock Down" {
+		t.Fatalf("want the catalog's answer: %v %+v", err, res.Songs)
+	}
+	if len(res.Live) != 1 || res.Live[0].Status != "timeout" {
+		t.Fatalf("live: %+v", res.Live)
+	}
+}

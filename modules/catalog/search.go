@@ -74,6 +74,9 @@ type SearchService struct {
 	Searchers []Searcher
 	Timeout   time.Duration // per provider
 	CacheTTL  time.Duration // per (provider, query)
+	// Budget: the most one search may take, live search included
+	// (CATALOG_SEARCH_BUDGET, default 10s).
+	Budget time.Duration
 
 	// Fuzzy enables typo-tolerant matching (Postgres with pg_trgm).
 	Fuzzy bool
@@ -326,7 +329,7 @@ func (s *SearchService) remember(key string) {
 
 // live asks every provider in parallel; results are ingested so the
 // local query that follows sees them merged with everything else.
-func (s *SearchService) live(ctx context.Context, q string) ([]ProviderSearch, IngestStats) {
+func (s *SearchService) live(ctx context.Context, q string, timeout time.Duration) ([]ProviderSearch, IngestStats) {
 	q = strings.TrimSpace(q)
 	out := make([]ProviderSearch, len(s.Searchers))
 	found := make([][]Track, len(s.Searchers))
@@ -344,10 +347,10 @@ func (s *SearchService) live(ctx context.Context, q string) ([]ProviderSearch, I
 			continue
 		}
 		asked++
-		out[i] = ProviderSearch{Provider: sr.Name(), Status: "timeout", Error: "no answer within " + s.Timeout.String()}
+		out[i] = ProviderSearch{Provider: sr.Name(), Status: "timeout", Error: "no answer within " + timeout.String()}
 		go func() {
 			start := time.Now()
-			cctx, cancel := context.WithTimeout(ctx, s.Timeout)
+			cctx, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()
 			var tracks []Track
 			var err error
@@ -359,7 +362,7 @@ func (s *SearchService) live(ctx context.Context, q string) ([]ProviderSearch, I
 			case errors.Is(err, ErrUnavailable):
 				ps.Status, ps.Error, tracks = "skipped", err.Error(), nil
 			case cctx.Err() == context.DeadlineExceeded:
-				ps.Status, ps.Error, tracks = "timeout", "no answer within "+s.Timeout.String(), nil
+				ps.Status, ps.Error, tracks = "timeout", "no answer within "+timeout.String(), nil
 			case err != nil:
 				ps.Status, ps.Error, tracks = "error", err.Error(), nil
 			default:
@@ -371,7 +374,7 @@ func (s *SearchService) live(ctx context.Context, q string) ([]ProviderSearch, I
 	// Wait for the answers, but never much past the providers' timeout: a
 	// provider stuck outside its context (e.g. waiting on a busy database)
 	// must not hold the request. Its answer, if it comes, is dropped.
-	deadline := time.NewTimer(s.Timeout + 2*time.Second)
+	deadline := time.NewTimer(timeout + liveSlack(timeout))
 	defer deadline.Stop()
 collect:
 	for range asked {
@@ -399,6 +402,15 @@ func likeEscape(s string) string {
 // Search runs the query against the catalog, after a live provider search
 // when the mode asks for one.
 func (s *SearchService) Search(ctx context.Context, q Query) (Result, error) {
+	// One budget for the whole request, live search included: a gateway in
+	// front (often ~15s) must never time out first.
+	budget := s.Budget
+	if budget <= 0 {
+		budget = 10 * time.Second
+	}
+	deadline := time.Now().Add(budget)
+	ctx, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
 	var res Result
 	text := strings.TrimSpace(q.Q)
 	folded := Fold(text)
@@ -429,7 +441,7 @@ func (s *SearchService) Search(ctx context.Context, q Query) (Result, error) {
 	canLive := text != "" && len(s.Searchers) > 0
 	// live=true: ask the providers first, always
 	if canLive && q.Live == LiveOn {
-		res.Live, res.Ingested = s.live(ctx, text)
+		res.Live, res.Ingested = s.live(ctx, text, s.liveTimeout(budget))
 	}
 
 	// local runs the catalog query; it may run twice (after a live search).
@@ -437,7 +449,7 @@ func (s *SearchService) Search(ctx context.Context, q Query) (Result, error) {
 		res.Songs, res.Match, res.Loose, res.Suggest = nil, "", false, ""
 		words := strings.Fields(SearchFold(text))
 		// filters: everything but the text
-		db := s.DB.Model(&Song{})
+		db := s.DB.WithContext(ctx).Model(&Song{})
 		if q.Artist != "" {
 			db = db.Where("key LIKE ? ESCAPE '\\'", likeEscape(Fold(q.Artist))+"|%")
 		}
@@ -474,7 +486,16 @@ func (s *SearchService) Search(ctx context.Context, q Query) (Result, error) {
 				// Blend: any song matching a word (as typed, squashed, or with a
 				// typo) is a candidate; the score below ranks the closest first.
 				// Only a bounded candidate set is scored (see candidates).
-				db = db.Where(m.candidates())
+				u := m.candidates()
+				var ids []uint
+				if err := s.DB.WithContext(ctx).Raw("SELECT id FROM "+u.SQL+" AS u", u.Vars...).Scan(&ids).Error; err != nil {
+					return err
+				}
+				if len(ids) == 0 {
+					db = db.Where("1 = 0")
+				} else {
+					db = db.Where("id IN ?", ids)
+				}
 			} else {
 				// An explicit order (recent, plays, title) lists only songs
 				// matching every word, so partial matches never lead the list.
@@ -496,7 +517,7 @@ func (s *SearchService) Search(ctx context.Context, q Query) (Result, error) {
 			var err error
 			if filtered {
 				sub := db.Session(&gorm.Session{}).Select("1").Limit(FilteredCountCap)
-				err = s.DB.Table("(?) AS capped", sub).Count(&n).Error
+				err = s.DB.WithContext(ctx).Table("(?) AS capped", sub).Count(&n).Error
 			} else if s.Cache.Get(ctx, lastKey, &n) {
 				// the whole catalog: RefreshTotals keeps this current in the
 				// background; counting 600k rows per request starved the database
@@ -566,13 +587,21 @@ func (s *SearchService) Search(ctx context.Context, q Query) (Result, error) {
 	}
 	// live=auto (default): the catalog answers first, in milliseconds. Only
 	// a weak answer (nothing exact, or less than a page) on page 1 asks the
-	// providers live (up to CATALOG_LIVE_TIMEOUT), then answers again with
-	// what they added.
+	// providers live, then answers again with what they added. All of it
+	// within the request's budget: the live search gets what's left (minus
+	// time for the second answer), or is skipped; a second answer that
+	// fails keeps the first.
 	if canLive && q.Live == LiveAuto && page == 1 && (res.Match != "exact" || res.Total < int64(limit)) {
-		res.Live, res.Ingested = s.live(ctx, text)
-		if res.Ingested.NewSongs > 0 || res.Ingested.Attached > 0 || res.Ingested.Inserted > 0 {
-			if err := local(); err != nil {
-				return res, err
+		// skip it only when too little time is left to be worth asking
+		if lt := s.liveTimeout(time.Until(deadline)); lt > 0 && lt >= min(500*time.Millisecond, s.liveTimeout(budget)) {
+			first := res
+			res.Live, res.Ingested = s.live(ctx, text, lt)
+			if res.Ingested.NewSongs > 0 || res.Ingested.Attached > 0 || res.Ingested.Inserted > 0 {
+				if err := local(); err != nil {
+					live, ing := res.Live, res.Ingested
+					res = first
+					res.Live, res.Ingested = live, ing
+				}
 			}
 		}
 	}
@@ -623,4 +652,20 @@ func (s *SearchService) RefreshTotals(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// liveSlack: how long past the providers' timeout their answers are awaited.
+func liveSlack(timeout time.Duration) time.Duration { return min(2*time.Second, timeout/2) }
+
+// liveTimeout: the provider timeout that fits in left, keeping a quarter
+// of it for the catalog's second answer (CATALOG_LIVE_TIMEOUT at most).
+func (s *SearchService) liveTimeout(left time.Duration) time.Duration {
+	timeout := s.Timeout
+	if timeout <= 0 {
+		timeout = 6 * time.Second
+	}
+	avail := left * 3 / 4
+	// t + liveSlack(t) <= avail
+	t := max(avail-2*time.Second, avail*2/3)
+	return max(0, min(timeout, t))
 }

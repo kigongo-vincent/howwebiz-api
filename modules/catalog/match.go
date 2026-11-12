@@ -226,6 +226,11 @@ const candidateCap = 1500
 // The strong matches are always in; only the long tail of a broad word is
 // cut. Each lookup is wrapped as a subquery so its LIMIT is legal in a
 // UNION on both Postgres and SQLite.
+//
+// It returns the parenthesized UNION of ids. The caller fetches the ids
+// first and scores those rows by primary key: filtering on "id IN (this
+// union)" let Postgres pick a full table scan plus a hash join (10s+ on a
+// busy database).
 func (m matcher) candidates() clause.Expr {
 	var parts []clause.Expr
 	limited := func(where clause.Expr, n int) {
@@ -252,8 +257,7 @@ func (m matcher) candidates() clause.Expr {
 		limited(clause.Expr{SQL: `LOWER(title) LIKE ? ESCAPE '\'`, Vars: []any{likeEscape(strings.ToLower(m.folded)) + "%"}}, 500)
 	}
 	limited(m.exactAny(), candidateCap)
-	e := join(parts, " UNION ")
-	return clause.Expr{SQL: "id IN " + e.SQL, Vars: e.Vars}
+	return join(parts, " UNION ")
 }
 
 // exactAny: any word as typed (no typo branches: those are added apart).

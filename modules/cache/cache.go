@@ -64,7 +64,7 @@ func (c *Cache) usable() bool {
 // failed trips the breaker (logging once per trip) unless err is a plain miss.
 func (c *Cache) failed(err error) {
 	// a miss, or the request went away: Redis itself is fine
-	if err == nil || errors.Is(err, redis.Nil) || errors.Is(err, context.Canceled) {
+	if err == nil || errors.Is(err, redis.Nil) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return
 	}
 	prev := c.downUntil.Swap(time.Now().Add(coolDown).UnixNano())
