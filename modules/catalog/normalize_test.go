@@ -96,4 +96,11 @@ func TestIsMix(t *testing.T) {
 	if !IsMix("Untitled", 40*60*1000) || IsMix("Walumbe Zaaya", 14*60*1000) {
 		t.Error("length: 40 min is a mix, a 14 min kadongo kamu epic is not")
 	}
+	// hearthis: a 24-minute R&B set and a 21-minute radio show
+	if !IsMix("NOSTALGIA 4 - OldSkul R&B Jamz", 24*60*1000) || !IsMix("NRG BREAKFAST CLUB WEDNESDAY", 21*60*1000) {
+		t.Error("20+ minutes is a mix")
+	}
+	if !IsMix("The Groove Doctor's Drive Time Show", 12*60*1000) || IsMix("The Show", 3*60*1000) || IsMix("Radio", 4*60*1000) {
+		t.Error("show titles count only when long")
+	}
 }

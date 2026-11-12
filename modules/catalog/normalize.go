@@ -52,9 +52,13 @@ const (
 	KindMix  = "mix"
 )
 
-// MixMinMs: a "song" this long is a DJ mix or nonstop (the longest
-// kadongo kamu epics run 10-15 minutes).
-const MixMinMs = 25 * 60 * 1000
+// MixMinMs: a "song" this long is a DJ mix, nonstop or show (the longest
+// kadongo kamu epics run 10-15 minutes; DJ sets start around 20).
+const MixMinMs = 20 * 60 * 1000
+
+// showMinMs: a track titled like a show ("radio show", "episode") is one
+// from this length; a 3-minute song called "The Show" stays a song.
+const showMinMs = 10 * 60 * 1000
 
 var (
 	// "Gospel Nonstop", "Kadongo Kamu Mixtape", "Megamix", "DJ Mix",
@@ -62,12 +66,14 @@ var (
 	mixWordRe = regexp.MustCompile(`(?i)\b(non[\s-]?stops?|mix[\s-]?tapes?|mega[\s-]?mix(es)?|dj[\s-]?mix(es)?|mixes)\b`)
 	// "Mix Vol 3", "Mix 2024", "Mix 12"; a song called "Love Mix" stays a song
 	mixVolRe = regexp.MustCompile(`(?i)\bmix\b\s*(vol(ume)?\.?\s*\d+|#?\d+)`)
+	showRe   = regexp.MustCompile(`(?i)\b(show|episode|ep\.?\s*\d+|podcast|radio|broadcast|live\s+set|dj\s+set)\b`)
 )
 
 // IsMix reports whether a track is a DJ mix / nonstop / mixtape rather
 // than a song: by its title, or a length no song has.
 func IsMix(title string, durationMs int) bool {
-	return durationMs >= MixMinMs || mixWordRe.MatchString(title) || mixVolRe.MatchString(title)
+	return durationMs >= MixMinMs || mixWordRe.MatchString(title) || mixVolRe.MatchString(title) ||
+		(durationMs >= showMinMs && showRe.MatchString(title))
 }
 
 // KindOf is the track's kind: the provider's word, else IsMix.

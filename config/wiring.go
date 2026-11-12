@@ -15,10 +15,13 @@ import (
 	"github.com/kigongo-vincent/howwebiz-api/modules/providers/audius"
 	"github.com/kigongo-vincent/howwebiz-api/modules/providers/busoga"
 	"github.com/kigongo-vincent/howwebiz-api/modules/providers/fma"
+	"github.com/kigongo-vincent/howwebiz-api/modules/providers/hearthis"
+	"github.com/kigongo-vincent/howwebiz-api/modules/providers/incompetech"
 	"github.com/kigongo-vincent/howwebiz-api/modules/providers/internetarchive"
 	"github.com/kigongo-vincent/howwebiz-api/modules/providers/jamendo"
 	"github.com/kigongo-vincent/howwebiz-api/modules/providers/mdundo"
 	"github.com/kigongo-vincent/howwebiz-api/modules/providers/mzikii"
+	"github.com/kigongo-vincent/howwebiz-api/modules/providers/ncs"
 	"github.com/kigongo-vincent/howwebiz-api/modules/providers/pearltunes"
 	"github.com/kigongo-vincent/howwebiz-api/modules/providers/sitecrawl"
 	"github.com/kigongo-vincent/howwebiz-api/modules/providers/ugamusic"
@@ -38,7 +41,7 @@ func Wire(ctx context.Context, db *gorm.DB, app *fiber.App, background bool) Dep
 
 	ingester := &catalog.Ingester{DB: db,
 		Priority: base.EnvList("CATALOG_PROVIDER_PRIORITY", []string{"howwe", "ugamusic", "pearltunes", "mdundo", "momuziki",
-			"mzikii", "ugmuziki", "busoga", "audiocom", "audius", "jamendo", "fma", "internetarchive"})}
+			"mzikii", "ugmuziki", "busoga", "audiocom", "audius", "jamendo", "fma", "ncs", "hearthis", "incompetech", "internetarchive"})}
 
 	ptCfg := sitecrawl.ConfigFromEnv("PEARLTUNES", "https://pearltunes.com")
 	// More Ugandan / African sources (see each package's doc for what it reads).
@@ -48,6 +51,9 @@ func Wire(ctx context.Context, db *gorm.DB, app *fiber.App, background bool) Dep
 	bsCfg := sitecrawl.ConfigFromEnv("BUSOGA", "https://www.busogamusicstore.com")
 	// Free-licensed catalogs across every genre (hip hop, R&B, soul, jazz, ...).
 	fmCfg := sitecrawl.ConfigFromEnv("FMA", "https://freemusicarchive.org")
+	htCfg := sitecrawl.ConfigFromEnv("HEARTHIS", "https://api-v2.hearthis.at")
+	ncCfg := sitecrawl.ConfigFromEnv("NCS", "https://ncs.io")
+	icCfg := sitecrawl.ConfigFromEnv("INCOMPETECH", "https://incompetech.com")
 	ugCfg := sitecrawl.ConfigFromEnv("UGAMUSIC", "https://ugamusic.net")
 	// Full-track APIs with worldwide catalogs (see README "Sources researched").
 	auCfg := sitecrawl.ConfigFromEnv("AUDIUS", "https://api.audius.co")
@@ -64,6 +70,10 @@ func Wire(ctx context.Context, db *gorm.DB, app *fiber.App, background bool) Dep
 		ugmuziki.Name: sitecrawl.New(ctx, db, ugmuziki.Site{Base: umCfg.Web.BaseURL}, umCfg, ingester),
 		fma.Name: sitecrawl.New(ctx, db, fma.Site{Base: fmCfg.Web.BaseURL,
 			Genres: base.EnvList("FMA_GENRES", fma.DefaultGenres)}, fmCfg, ingester),
+		hearthis.Name: sitecrawl.New(ctx, db, hearthis.Site{Base: htCfg.Web.BaseURL,
+			Genres: base.EnvList("HEARTHIS_GENRES", hearthis.DefaultGenres)}, htCfg, ingester),
+		ncs.Name:         sitecrawl.New(ctx, db, ncs.Site{Base: ncCfg.Web.BaseURL}, ncCfg, ingester),
+		incompetech.Name: sitecrawl.New(ctx, db, incompetech.Site{Base: icCfg.Web.BaseURL}, icCfg, ingester),
 		busoga.Name: sitecrawl.New(ctx, db, busoga.Site{Base: bsCfg.Web.BaseURL,
 			MaxSongs: base.EnvInt("BUSOGA_MAX_SONGS", busoga.MaxSongsPerFeed)}, bsCfg, ingester),
 		audius.Name: sitecrawl.New(ctx, db, audius.Site{Base: auCfg.Web.BaseURL,

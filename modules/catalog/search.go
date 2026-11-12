@@ -112,6 +112,11 @@ func (s *SearchService) PrepareSearchText(ctx context.Context) error {
 	if !empty {
 		s.textIndexed.Store(true)
 	}
+	// MixMinMs shrank (25 -> 20 min): one targeted update instead of a
+	// full rewrite. Cheap when nothing matches.
+	if err := s.DB.Model(&Song{}).Where("kind = ? AND duration_ms >= ?", KindSong, MixMinMs).Update("kind", KindMix).Error; err != nil {
+		return err
+	}
 	var after uint
 	filled := 0
 	for ctx.Err() == nil {
