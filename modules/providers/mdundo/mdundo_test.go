@@ -125,3 +125,44 @@ func TestOtherListsKeepTheirOwnKind(t *testing.T) {
 		t.Fatalf("mixes=%d chart songs=%d", mixes, songs)
 	}
 }
+
+// Every artist the charts found gets their whole catalog read, one page
+// at a time, resuming where the last run stopped as the list grows.
+func TestArtistsFeed(t *testing.T) {
+	artists := []string{"/artist/360112/Eddy-Kenzo"}
+	s := Site{Base: "https://play.mdundo.com", Feed: []string{"top-charts/ng"},
+		Artists: func() ([]string, error) { return artists, nil }}
+	if f := s.Feeds(); len(f) != 2 || f[1] != ArtistsFeed || !s.Tail(ArtistsFeed) || s.Tail("top-charts/ng") {
+		t.Fatalf("feeds %v", f)
+	}
+	var fetched []string
+	get := func(_ context.Context, p string) ([]byte, error) {
+		fetched = append(fetched, p)
+		return fixture(t, "artist_eddy_kenzo.html"), nil
+	}
+	tracks, next, done, err := s.FeedPage(context.Background(), get, ArtistsFeed, "")
+	if err != nil || next != "1" || !done || len(tracks) == 0 || fetched[0] != "/artist/360112/Eddy-Kenzo" {
+		t.Fatalf("tracks=%d next=%q done=%v err=%v fetched=%v", len(tracks), next, done, err, fetched)
+	}
+	// caught up: nothing fetched, cursor kept
+	if _, next, done, _ := s.FeedPage(context.Background(), get, ArtistsFeed, "1"); next != "1" || !done || len(fetched) != 1 {
+		t.Fatalf("caught up: next=%q done=%v fetched=%d", next, done, len(fetched))
+	}
+	// a new artist found later is read on the next run, from the stored cursor
+	artists = append(artists, "/artist/659108/Hoozambe-D-Star")
+	if _, next, _, _ := s.FeedPage(context.Background(), get, ArtistsFeed, "1"); next != "2" || fetched[1] != "/artist/659108/Hoozambe-D-Star" {
+		t.Fatalf("new artist: next=%q fetched=%v", next, fetched)
+	}
+	if (Site{}).Feeds()[len(DefaultFeeds)-1] != DefaultFeeds[len(DefaultFeeds)-1] || len((Site{}).Feeds()) != len(DefaultFeeds) {
+		t.Error("no Artists func: no artists feed")
+	}
+}
+
+func TestArtistPath(t *testing.T) {
+	if p := ArtistPath("https://play.mdundo.com/artist/360112/Eddy-Kenzo#autoplay-2932247"); p != "/artist/360112/Eddy-Kenzo" {
+		t.Errorf("%q", p)
+	}
+	if ArtistPath("https://example.com/song/1") != "" {
+		t.Error("non-artist url")
+	}
+}

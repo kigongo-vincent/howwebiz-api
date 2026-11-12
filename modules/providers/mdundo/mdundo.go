@@ -11,6 +11,8 @@
 //
 //	/top-charts/{country}   charts (Uganda first)
 //	/genre/{id}/{name}      top songs of each genre (DJ-Mixes are mixes)
+//	/artist/{id}/{name}     an artist's whole catalog: every artist seen on a
+//	                        chart or genre page (the "artists" feed)
 //
 // and answers live searches with /search-results?term=.
 // Premium tracks (behind Mdundo's subscription) are skipped.
@@ -21,6 +23,7 @@ import (
 	"context"
 	"html"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -45,9 +48,17 @@ var DefaultFeeds = []string{
 	"genre/245/DJ-Mixes",
 }
 
+// ArtistsFeed walks the catalogs of every artist the other feeds found.
+const ArtistsFeed = "artists"
+
 type Site struct {
 	Base string   // https://play.mdundo.com
 	Feed []string // overrides DefaultFeeds
+	// Artists lists the artist page paths ("/artist/{id}/{name}") found so
+	// far, in the order they were found (chart artists first): new ones
+	// only ever come last, so a position in the list is a stable cursor.
+	// Nil turns the artists feed off.
+	Artists func() ([]string, error)
 }
 
 func (s Site) Name() string { return Name }
@@ -59,21 +70,59 @@ func (s Site) Info() catalog.ProviderInfo {
 
 // Feeds: one-page lists (charts and genres).
 func (s Site) Feeds() []string {
+	feeds := DefaultFeeds
 	if len(s.Feed) > 0 {
-		return s.Feed
+		feeds = s.Feed
 	}
-	return DefaultFeeds
+	if s.Artists != nil {
+		feeds = append(slices.Clone(feeds), ArtistsFeed)
+	}
+	return feeds
 }
 
-func (s Site) Tail(string) bool { return false }
+// Tail: the artists feed resumes where it stopped (new artists come last);
+// charts and genres are re-read from the top.
+func (s Site) Tail(feed string) bool { return feed == ArtistsFeed }
 
 func (s Site) FeedPage(ctx context.Context, get sitecrawl.Fetch, feed, cursor string) ([]catalog.Track, string, bool, error) {
+	if feed == ArtistsFeed {
+		return s.artistPage(ctx, get, cursor)
+	}
 	body, err := get(ctx, "/"+strings.TrimPrefix(feed, "/"))
 	if err != nil {
 		return nil, "", false, err
 	}
 	tracks, err := s.parseCards(body, "/"+strings.TrimPrefix(feed, "/"))
 	return tracks, "", true, err // a list is one page
+}
+
+// artistPage reads the artist at position cursor in the Artists list.
+func (s Site) artistPage(ctx context.Context, get sitecrawl.Fetch, cursor string) ([]catalog.Track, string, bool, error) {
+	artists, err := s.Artists()
+	if err != nil {
+		return nil, cursor, false, err
+	}
+	i, _ := strconv.Atoi(cursor)
+	if i >= len(artists) {
+		return nil, strconv.Itoa(i), true, nil // caught up: resume here when more are found
+	}
+	body, err := get(ctx, artists[i])
+	if err != nil {
+		return nil, "", false, err
+	}
+	tracks, err := s.parseCards(body, artists[i])
+	return tracks, strconv.Itoa(i + 1), i+1 >= len(artists), err
+}
+
+// ArtistPath extracts the artist page path from a song's PageURL
+// (".../artist/{id}/{name}#autoplay-{song}").
+func ArtistPath(pageURL string) string {
+	i := strings.Index(pageURL, "/artist/")
+	if i < 0 {
+		return ""
+	}
+	p, _, _ := strings.Cut(pageURL[i:], "#")
+	return p
 }
 
 // genreOf names the genre of a "genre/{id}/{Name}" feed.

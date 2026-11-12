@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -63,7 +64,7 @@ func Wire(ctx context.Context, db *gorm.DB, app *fiber.App, background bool) Dep
 		pearltunes.Name: sitecrawl.New(ctx, db, pearltunes.Site{Base: ptCfg.Web.BaseURL}, ptCfg, ingester),
 		ugamusic.Name:   sitecrawl.New(ctx, db, ugamusic.Site{Base: ugCfg.Web.BaseURL}, ugCfg, ingester),
 		mdundo.Name: sitecrawl.New(ctx, db, mdundo.Site{Base: mdCfg.Web.BaseURL,
-			Feed: base.EnvList("MDUNDO_FEEDS", mdundo.DefaultFeeds)}, mdCfg, ingester),
+			Feed: base.EnvList("MDUNDO_FEEDS", mdundo.DefaultFeeds), Artists: mdundoArtists(db)}, mdCfg, ingester),
 		mzikii.Name:   sitecrawl.New(ctx, db, mzikii.Site{Base: mzCfg.Web.BaseURL}, mzCfg, ingester),
 		ugmuziki.Name: sitecrawl.New(ctx, db, ugmuziki.Site{Base: umCfg.Web.BaseURL}, umCfg, ingester),
 		fma.Name: sitecrawl.New(ctx, db, fma.Site{Base: fmCfg.Web.BaseURL,
@@ -159,6 +160,43 @@ func Wire(ctx context.Context, db *gorm.DB, app *fiber.App, background bool) Dep
 		indexer.Start(ctx, base.EnvDuration("CATALOG_INDEX_INTERVAL", 2*time.Minute))
 	}
 	return deps
+}
+
+// mdundoArtists lists the Mdundo artist pages found so far (from the songs
+// the chart and genre feeds stored), in the order first found, for the
+// artists feed. Reloaded at most every 10 minutes. MDUNDO_ARTISTS=false
+// turns the feed off.
+func mdundoArtists(db *gorm.DB) func() ([]string, error) {
+	if !base.EnvBool("MDUNDO_ARTISTS", true) {
+		return nil
+	}
+	var (
+		mu     sync.Mutex
+		cached []string
+		at     time.Time
+	)
+	return func() ([]string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if cached != nil && time.Since(at) < 10*time.Minute {
+			return cached, nil
+		}
+		var urls []string
+		if err := db.Model(&catalog.Source{}).Where("provider = ?", mdundo.Name).
+			Order("id").Pluck("page_url", &urls).Error; err != nil {
+			return nil, err
+		}
+		seen := map[string]bool{}
+		out := make([]string, 0, len(urls)/10)
+		for _, u := range urls {
+			if p := mdundo.ArtistPath(u); p != "" && !seen[p] {
+				seen[p] = true
+				out = append(out, p)
+			}
+		}
+		cached, at = out, time.Now()
+		return out, nil
+	}
 }
 
 // trigramReady reports whether typo-tolerant search can run (Postgres
