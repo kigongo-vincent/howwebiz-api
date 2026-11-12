@@ -434,7 +434,7 @@ paths:
         - { name: q, in: query, description: 'Title, artist or featured artist (accent/punctuation-insensitive; all words must match).', schema: { type: string } }
         - { name: artist, in: query, description: Primary artist, schema: { type: string } }
         - { name: genre, in: query, schema: { type: string } }
-        - { name: provider, in: query, description: Only songs available from this provider, schema: { type: string, enum: [howwe, ugamusic, pearltunes, mdundo, momuziki, mzikii, ugmuziki, busoga, audiocom, audius, jamendo, internetarchive] } }
+        - { name: provider, in: query, description: Only songs available from this provider, schema: { type: string, enum: [howwe, ugamusic, pearltunes, mdundo, momuziki, mzikii, ugmuziki, busoga, audiocom, audius, jamendo, fma, internetarchive] } }
         - { name: type, in: query, schema: { type: string, enum: [song, mix, all], default: song }, description: 'song: songs only. mix: DJ mixes, nonstops and mixtapes (flagged by the provider, titled like one, or 25+ minutes long). all: both.' }
         - $ref: '#/components/parameters/HasAudio'
         - { name: sort, in: query, schema: { type: string, enum: [relevance, recent, plays, title] }, description: 'Default: relevance with q, else recent.' }

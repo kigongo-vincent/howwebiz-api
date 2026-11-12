@@ -14,6 +14,7 @@ import (
 	"github.com/kigongo-vincent/howwebiz-api/modules/momuziki"
 	"github.com/kigongo-vincent/howwebiz-api/modules/providers/audius"
 	"github.com/kigongo-vincent/howwebiz-api/modules/providers/busoga"
+	"github.com/kigongo-vincent/howwebiz-api/modules/providers/fma"
 	"github.com/kigongo-vincent/howwebiz-api/modules/providers/internetarchive"
 	"github.com/kigongo-vincent/howwebiz-api/modules/providers/jamendo"
 	"github.com/kigongo-vincent/howwebiz-api/modules/providers/mdundo"
@@ -37,7 +38,7 @@ func Wire(ctx context.Context, db *gorm.DB, app *fiber.App, background bool) Dep
 
 	ingester := &catalog.Ingester{DB: db,
 		Priority: base.EnvList("CATALOG_PROVIDER_PRIORITY", []string{"howwe", "ugamusic", "pearltunes", "mdundo", "momuziki",
-			"mzikii", "ugmuziki", "busoga", "audiocom", "audius", "jamendo", "internetarchive"})}
+			"mzikii", "ugmuziki", "busoga", "audiocom", "audius", "jamendo", "fma", "internetarchive"})}
 
 	ptCfg := sitecrawl.ConfigFromEnv("PEARLTUNES", "https://pearltunes.com")
 	// More Ugandan / African sources (see each package's doc for what it reads).
@@ -45,6 +46,8 @@ func Wire(ctx context.Context, db *gorm.DB, app *fiber.App, background bool) Dep
 	mzCfg := sitecrawl.ConfigFromEnv("MZIKII", "https://www.mzikii.com")
 	umCfg := sitecrawl.ConfigFromEnv("UGMUZIKI", "https://www.ugmuziki.com")
 	bsCfg := sitecrawl.ConfigFromEnv("BUSOGA", "https://www.busogamusicstore.com")
+	// Free-licensed catalogs across every genre (hip hop, R&B, soul, jazz, ...).
+	fmCfg := sitecrawl.ConfigFromEnv("FMA", "https://freemusicarchive.org")
 	ugCfg := sitecrawl.ConfigFromEnv("UGAMUSIC", "https://ugamusic.net")
 	// Full-track APIs with worldwide catalogs (see README "Sources researched").
 	auCfg := sitecrawl.ConfigFromEnv("AUDIUS", "https://api.audius.co")
@@ -59,6 +62,8 @@ func Wire(ctx context.Context, db *gorm.DB, app *fiber.App, background bool) Dep
 			Feed: base.EnvList("MDUNDO_FEEDS", mdundo.DefaultFeeds)}, mdCfg, ingester),
 		mzikii.Name:   sitecrawl.New(ctx, db, mzikii.Site{Base: mzCfg.Web.BaseURL}, mzCfg, ingester),
 		ugmuziki.Name: sitecrawl.New(ctx, db, ugmuziki.Site{Base: umCfg.Web.BaseURL}, umCfg, ingester),
+		fma.Name: sitecrawl.New(ctx, db, fma.Site{Base: fmCfg.Web.BaseURL,
+			Genres: base.EnvList("FMA_GENRES", fma.DefaultGenres)}, fmCfg, ingester),
 		busoga.Name: sitecrawl.New(ctx, db, busoga.Site{Base: bsCfg.Web.BaseURL,
 			MaxSongs: base.EnvInt("BUSOGA_MAX_SONGS", busoga.MaxSongsPerFeed)}, bsCfg, ingester),
 		audius.Name: sitecrawl.New(ctx, db, audius.Site{Base: auCfg.Web.BaseURL,
