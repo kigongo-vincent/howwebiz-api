@@ -324,3 +324,40 @@ func TestDiscoverReportsCatalogTotal(t *testing.T) {
 		}
 	}
 }
+
+func TestMemIndexCandidatesAndDelta(t *testing.T) {
+	s := seedCatalog(t)
+	s.textIndexed.Store(true)
+	mem := &MemIndex{DB: s.DB, Batch: 7} // small batches: several pages
+	ctx := context.Background()
+	if err := mem.Build(ctx); err != nil {
+		t.Fatal(err)
+	}
+	s.Mem = mem
+	res, err := s.Search(ctx, Query{Q: "sitya loss", Limit: 5, Live: LiveOff})
+	if err != nil || len(res.Songs) == 0 || res.Songs[0].Title != "Sitya Loss" {
+		t.Fatalf("in-memory search: %v %v", err, res.Songs)
+	}
+	// a song stored after the build is found after a refresh
+	if _, err := s.Ingester.Ingest([]Track{{Provider: "howwe", ExternalID: "new1", Title: "Brand New Jam", Artist: "Newbie",
+		AudioURL: "https://x/n.mp3"}}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := mem.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	res, err = s.Search(ctx, Query{Q: "brand new jam", Limit: 5, Live: LiveOff})
+	if err != nil || len(res.Songs) == 0 || res.Songs[0].Title != "Brand New Jam" {
+		t.Fatalf("after refresh: %v %v", err, res.Songs)
+	}
+	// explicit sorts list only songs with every word
+	res, _ = s.Search(ctx, Query{Q: "afro tune", Sort: "plays", Limit: 50, Live: LiveOff})
+	for _, x := range res.Songs {
+		if !containsAll(x.SearchText, []string{"afro", "tune"}) && x.Title[:4] != "Afro" {
+			t.Fatalf("sort=plays listed %q", x.Title)
+		}
+	}
+	if len(res.Songs) != 20 {
+		t.Fatalf("sort=plays: %d songs, want the 20 afro tunes", len(res.Songs))
+	}
+}

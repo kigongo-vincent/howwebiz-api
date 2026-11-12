@@ -129,6 +129,14 @@ func WireAPI(ctx context.Context, db, apiDB *gorm.DB, app *fiber.App, background
 	// search_text was already filled by an earlier run: use its index from
 	// the first request, not after the upkeep below gets to it
 	searchSvc.RestoreIndexState(ctx)
+	// In-memory text index: which songs a query matches is found in Go,
+	// never waiting on a database busy with crawling.
+	if background && base.EnvBool("CATALOG_MEMINDEX", true) {
+		mem := &catalog.MemIndex{DB: db, Pause: base.EnvDuration("CATALOG_MEMINDEX_PAUSE", 50*time.Millisecond),
+			DeltaEvery: base.EnvDuration("CATALOG_MEMINDEX_DELTA", time.Minute)}
+		searchSvc.Mem = mem
+		go func() { _ = base.Safe("in-memory search index", func() { mem.Run(ctx) }) }()
+	}
 	cat := &catalog.Service{DB: apiDB, Ingester: ingester, Indexer: indexer, Providers: providers, Search: searchSvc}
 
 	deps := Dependencies{DB: db, APIDB: apiDB, App: app, Crawler: engine, AudioCom: audioCom, Momuziki: mom, Catalog: cat, Sites: sites, Cache: rc}

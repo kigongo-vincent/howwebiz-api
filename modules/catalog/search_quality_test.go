@@ -146,7 +146,24 @@ func evalSearch(t *testing.T) *SearchService {
 }
 
 func TestSearchQuality(t *testing.T) {
+	runEval(t, evalSearch(t))
+}
+
+// The same eval with the in-memory index choosing the candidates.
+func TestSearchQualityInMemory(t *testing.T) {
 	svc := evalSearch(t)
+	svc.Mem = &MemIndex{DB: svc.DB}
+	if err := svc.Mem.Build(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !svc.Mem.Ready() || svc.Mem.Size() == 0 {
+		t.Fatal("in-memory index empty")
+	}
+	runEval(t, svc)
+}
+
+func runEval(t *testing.T, svc *SearchService) {
+	t.Helper()
 	hits := 0
 	for _, c := range evalQueries {
 		res, err := svc.Search(context.Background(), Query{Q: c.q, Limit: 5, Live: LiveOff})

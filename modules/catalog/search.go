@@ -91,6 +91,9 @@ type SearchService struct {
 	// textIndexed: every row has search_text, so text queries use its
 	// trigram index (until then, the original per-column match).
 	textIndexed atomic.Bool
+	// Mem: the in-memory text index (nil or not built yet: the database
+	// answers which songs match).
+	Mem *MemIndex
 	// Background runs upkeep (the search_text backfill): no statement
 	// timeout, and off the pool requests use. Nil: DB.
 	Background *gorm.DB
@@ -277,7 +280,9 @@ func (s *SearchService) fuzzyIDs(ctx context.Context, gen string, words []string
 		// (and a failure is never cached as "no typo matches").
 		wctx, cancel := context.WithTimeout(ctx, fuzzyWordTimeout)
 		var n int64
-		if err := s.DB.WithContext(wctx).Raw(`SELECT COUNT(*) FROM (SELECT 1 FROM catalog_songs WHERE search_text LIKE ? ESCAPE '\' LIMIT ?) hits`,
+		if s.Mem.Ready() {
+			n = int64(s.Mem.Count(w, rareWordHits))
+		} else if err := s.DB.WithContext(wctx).Raw(`SELECT COUNT(*) FROM (SELECT 1 FROM catalog_songs WHERE search_text LIKE ? ESCAPE '\' LIMIT ?) hits`,
 			"%"+likeEscape(w)+"%", rareWordHits).Scan(&n).Error; err != nil {
 			cancel()
 			continue
@@ -513,6 +518,10 @@ func (s *SearchService) Search(ctx context.Context, q Query) (Result, error) {
 			}
 		}
 		candidates := int64(-1) // relevance: how many candidates were scored
+		// The in-memory index answers which songs match (the database only
+		// scores and loads them), when built and when the filters allow it.
+		audioOnly := q.HasAudio != nil && *q.HasAudio
+		useMem := s.Mem.Ready() && (q.HasAudio == nil || *q.HasAudio)
 		m := matcher{words: words, folded: folded, indexed: s.textIndexed.Load()}
 		if s.Fuzzy && m.indexed {
 			m.fuzzy = s.fuzzyIDs(ctx, gen, words)
@@ -522,9 +531,14 @@ func (s *SearchService) Search(ctx context.Context, q Query) (Result, error) {
 				// Blend: any song matching a word (as typed, squashed, or with a
 				// typo) is a candidate; the score below ranks the closest first.
 				// Only a bounded candidate set is scored (see candidates).
-				ids, err := s.candidateIDs(ctx, m)
-				if err != nil {
-					return err
+				var ids []uint
+				if useMem {
+					ids = append(s.Mem.Candidates(words, kind, audioOnly), m.fuzzyCandidates()...)
+				} else {
+					var err error
+					if ids, err = s.candidateIDs(ctx, m); err != nil {
+						return err
+					}
 				}
 				candidates = int64(len(ids))
 				if len(ids) == 0 {
@@ -535,7 +549,11 @@ func (s *SearchService) Search(ctx context.Context, q Query) (Result, error) {
 			} else {
 				// An explicit order (recent, plays, title) lists only songs
 				// matching every word, so partial matches never lead the list.
-				db = db.Where(m.all())
+				if useMem {
+					db = db.Where("id IN ?", append(s.Mem.AllWords(words, kind, audioOnly, FilteredCountCap), 0))
+				} else {
+					db = db.Where(m.all())
+				}
 			}
 		}
 		// Live results just ingested may change the total: count afresh then.
