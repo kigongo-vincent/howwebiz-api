@@ -30,7 +30,8 @@ import (
 // full comes first.
 type matcher struct {
 	words   []string
-	indexed bool // search_text is populated
+	folded  string // the whole query, Fold()ed as keys are ("artist|title")
+	indexed bool   // search_text is populated
 	// fuzzy: per rare word, the ids of the songs closest to it (computed
 	// once per word by SearchService.fuzzyIDs, then cached)
 	fuzzy map[string][]uint
@@ -161,13 +162,41 @@ func (m matcher) score() clause.Expr {
 			Vars: append(phrase.Vars, squashed.Vars...)})
 	}
 	if m.indexed && len(m.words) > 0 {
-		// the title is exactly the query: search_text starts with the
-		// squashed title. "Dole Y'omwaana" beats "Gudi Gude & Dole Yomwana"
-		parts = append(parts, clause.Expr{SQL: `(CASE WHEN search_text LIKE ? ESCAPE '\' THEN 1.5 ELSE 0 END)`,
+		// the title is exactly the query (search_text starts with the
+		// squashed title): "Dole Y'omwaana" beats "Gudi Gude & Dole
+		// Yomwana". Scaled by popularity, so a 5-play track called "Up"
+		// does not outrank the hit "Way Up" (Spotify does the same). No
+		// plays at all means no data (most Ugandan sites publish none), not
+		// an obscure song: full bonus.
+		parts = append(parts, clause.Expr{SQL: `(CASE WHEN search_text LIKE ? ESCAPE '\' THEN 1.5 * (CASE WHEN plays = 0 THEN 1.0 ELSE ` + popularity + ` END) ELSE 0 END)`,
 			Vars: []any{likeEscape(strings.Join(m.words, "")) + " %"}})
+	}
+	if !m.indexed && m.folded != "" {
+		// before search_text is filled: an exact title from the key
+		parts = append(parts, clause.Expr{SQL: `(CASE WHEN key LIKE ? ESCAPE '\' THEN 1.5 ELSE 0 END)`,
+			Vars: []any{"%|" + likeEscape(m.folded)}})
+	}
+	if m.folded != "" {
+		// the query is the song's primary artist: their own songs before
+		// the ones that only feature them (worth more than spread)
+		parts = append(parts, clause.Expr{SQL: `(CASE WHEN key LIKE ? ESCAPE '\' THEN 0.5 ELSE 0 END)`,
+			Vars: []any{likeEscape(m.folded) + "|%"}})
+	}
+	if len(m.words) > 0 {
+		parts = append(parts, clause.Expr{SQL: popularity + " + " + spread})
 	}
 	return join(parts, " + ")
 }
+
+// popularity of a song, 0 to 1 by total plays (a ladder: SQLite has no
+// LN): between two equally good matches the hit wins, and an obscure exact
+// title cannot outrank a popular near-exact one.
+const popularity = `(CASE WHEN plays >= 1000000 THEN 1.0 WHEN plays >= 100000 THEN 0.85 WHEN plays >= 10000 THEN 0.65 ` +
+	`WHEN plays >= 1000 THEN 0.5 WHEN plays >= 100 THEN 0.3 WHEN plays >= 10 THEN 0.15 ELSE 0 END)`
+
+// spread: a song several providers carry is popular even where no play
+// counts exist (most Ugandan sites publish none). Up to 0.3.
+const spread = `(CASE WHEN source_count >= 4 THEN 0.3 WHEN source_count = 3 THEN 0.2 WHEN source_count = 2 THEN 0.1 ELSE 0 END)`
 
 // containsAll reports whether every word is a substring of text.
 func containsAll(text string, words []string) bool {

@@ -41,7 +41,7 @@ var types = []string{KindSong, KindMix, "all"}
 //	?genre=  ?provider=  ?hasAudio=
 //	?type=      song (default) | mix (DJ mixes, nonstops, mixtapes) | all
 //	?sort=      relevance (default with q) | recent | plays | title
-//	?live=      auto (default: page 1 of a text search also asks every provider live) | true | false
+//	?live=      auto (default: the catalog answers; providers are asked live only when that answer is weak) | true | false
 //	?page= ?limit=
 func (s *Service) List(c *fiber.Ctx) error {
 	p := base.ParsePage(c)
@@ -77,6 +77,9 @@ func (s *Service) List(c *fiber.Ctx) error {
 	meta := fiber.Map{"query": q.Q, "cached": res.Cached}
 	if res.Match != "" {
 		meta["match"] = res.Match // exact: the first result holds every word; close: typos or some words
+	}
+	if res.Suggest != "" {
+		meta["suggest"] = res.Suggest // did you mean
 	}
 	if res.Loose {
 		meta["loose"] = true // no song had every word: these have some, the most first
@@ -165,4 +168,17 @@ func (s *Service) Cleanup(c *fiber.Ctx) error {
 	}
 	s.Search.Bump(c.UserContext())
 	return c.JSON(base.APIResponse{Data: st, Message: "removed songs without audio"})
+}
+
+// Suggest is search-as-you-type: ?q= (2+ letters), ?limit= (default 8, max 20).
+func (s *Service) Suggest(c *fiber.Ctx) error {
+	q := c.Query("q")
+	if len(q) > 200 {
+		return base.API_ERROR(c, "q is too long")
+	}
+	out, err := s.Search.Complete(c.UserContext(), q, c.QueryInt("limit", 8))
+	if err != nil {
+		return base.API_FAIL(c, fiber.StatusInternalServerError, "failed to suggest songs")
+	}
+	return c.JSON(base.APIResponse{Data: out})
 }

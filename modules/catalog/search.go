@@ -62,6 +62,9 @@ type Result struct {
 	Match string
 	// Loose: the best result is only a close match (Match == "close")
 	Loose bool
+	// Suggest is the query respelled after the best result ("did you mean
+	// essence wizkid"), when that result was only a close match.
+	Suggest string
 }
 
 // Searcher service: local catalog search + live fan-out to providers.
@@ -210,10 +213,37 @@ func (s *SearchService) fuzzyIDs(ctx context.Context, gen string, words []string
 				continue
 			}
 		}
+		if n == 0 && len(ids) == 0 {
+			// Nothing as typed, nothing within the usual typo distance: look
+			// further rather than answer nothing ("essense" -> "Essence",
+			// similarity 0.57). Few songs only: these are long shots.
+			ids = s.looseIDs(ctx, w)
+		}
 		out[w] = ids
 		s.Cache.Set(ctx, key, ids, s.CountTTL)
 	}
 	return out
+}
+
+// looseFuzzyThreshold: the word similarity a last-resort typo match needs
+// (pg_trgm's usual threshold is 0.6).
+const looseFuzzyThreshold = 0.45
+
+// looseIDs finds the songs closest to w at looseFuzzyThreshold: the GIN
+// index answers <% at whatever threshold the transaction sets.
+func (s *SearchService) looseIDs(ctx context.Context, w string) []uint {
+	var ids []uint
+	_ = s.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec(fmt.Sprintf("SET LOCAL pg_trgm.word_similarity_threshold = %.2f", looseFuzzyThreshold)).Error; err != nil {
+			return err
+		}
+		return tx.Raw(`SELECT id FROM catalog_songs WHERE ? <% search_text ORDER BY word_similarity(?, search_text) DESC, id LIMIT ?`,
+			w, w, fuzzyMaxSongs/4).Scan(&ids).Error
+	})
+	if ids == nil {
+		ids = []uint{}
+	}
+	return ids
 }
 
 // cacheKey is a stable digest of the parts of a query that shape a result.
@@ -321,101 +351,126 @@ func (s *SearchService) Search(ctx context.Context, q Query) (Result, error) {
 		res.Cached = true
 		return res, nil
 	}
-	if text != "" && (q.Live == LiveOn || (q.Live == LiveAuto && q.Page <= 1)) && len(s.Searchers) > 0 {
+	canLive := text != "" && len(s.Searchers) > 0
+	// live=true: ask the providers first, always
+	if canLive && q.Live == LiveOn {
 		res.Live, res.Ingested = s.live(ctx, text)
 	}
 
-	words := strings.Fields(SearchFold(text))
-	// filters: everything but the text
-	db := s.DB.Model(&Song{})
-	if q.Artist != "" {
-		db = db.Where("key LIKE ? ESCAPE '\\'", likeEscape(Fold(q.Artist))+"|%")
-	}
-	if q.Genre != "" {
-		db = db.Where("LOWER(genre) = ?", strings.ToLower(q.Genre))
-	}
-	if q.Provider != "" {
-		db = db.Where("id IN (?)", s.DB.Model(&Source{}).Select("song_id").Where("provider = ?", q.Provider))
-	}
-	if q.HasAudio != nil {
-		if *q.HasAudio {
-			db = db.Where("audio_url <> ''")
-		} else {
-			db = db.Where("audio_url = ''")
+	// local runs the catalog query; it may run twice (after a live search).
+	local := func() error {
+		res.Songs, res.Match, res.Loose, res.Suggest = nil, "", false, ""
+		words := strings.Fields(SearchFold(text))
+		// filters: everything but the text
+		db := s.DB.Model(&Song{})
+		if q.Artist != "" {
+			db = db.Where("key LIKE ? ESCAPE '\\'", likeEscape(Fold(q.Artist))+"|%")
 		}
-	}
-	if kind != "all" {
-		db = db.Where("kind = ?", kind)
-	}
+		if q.Genre != "" {
+			db = db.Where("LOWER(genre) = ?", strings.ToLower(q.Genre))
+		}
+		if q.Provider != "" {
+			db = db.Where("id IN (?)", s.DB.Model(&Source{}).Select("song_id").Where("provider = ?", q.Provider))
+		}
+		if q.HasAudio != nil {
+			if *q.HasAudio {
+				db = db.Where("audio_url <> ''")
+			} else {
+				db = db.Where("audio_url = ''")
+			}
+		}
+		if kind != "all" {
+			db = db.Where("kind = ?", kind)
+		}
 
-	sort := q.Sort
-	if sort == "" {
-		sort = "recent"
-		if text != "" {
-			sort = "relevance"
+		sort := q.Sort
+		if sort == "" {
+			sort = "recent"
+			if text != "" {
+				sort = "relevance"
+			}
 		}
-	}
-	m := matcher{words: words, indexed: s.textIndexed.Load()}
-	if s.Fuzzy && m.indexed {
-		m.fuzzy = s.fuzzyIDs(ctx, gen, words)
-	}
-	if len(words) > 0 {
-		if sort == "relevance" {
-			// Blend: any song matching a word (as typed, squashed, or with a
-			// typo) is a candidate; the score below ranks the closest first.
-			db = db.Where(m.any())
-		} else {
-			// An explicit order (recent, plays, title) lists only songs
-			// matching every word, so partial matches never lead the list.
-			db = db.Where(m.all())
+		m := matcher{words: words, folded: folded, indexed: s.textIndexed.Load()}
+		if s.Fuzzy && m.indexed {
+			m.fuzzy = s.fuzzyIDs(ctx, gen, words)
 		}
-	}
-	// Live results just ingested may change the total: count afresh then.
-	if res.Ingested.NewSongs > 0 || !s.Cache.Get(ctx, countKey, &res.Total) {
-		if err := db.Session(&gorm.Session{}).Count(&res.Total).Error; err != nil {
-			return res, err
+		if len(words) > 0 {
+			if sort == "relevance" {
+				// Blend: any song matching a word (as typed, squashed, or with a
+				// typo) is a candidate; the score below ranks the closest first.
+				db = db.Where(m.any())
+			} else {
+				// An explicit order (recent, plays, title) lists only songs
+				// matching every word, so partial matches never lead the list.
+				db = db.Where(m.all())
+			}
 		}
-		s.Cache.Set(ctx, countKey, res.Total, s.CountTTL)
-	}
+		// Live results just ingested may change the total: count afresh then.
+		if res.Ingested.NewSongs > 0 || !s.Cache.Get(ctx, countKey, &res.Total) {
+			if err := db.Session(&gorm.Session{}).Count(&res.Total).Error; err != nil {
+				return err
+			}
+			s.Cache.Set(ctx, countKey, res.Total, s.CountTTL)
+		}
 
-	switch sort {
-	case "relevance":
-		// closest match first, then: exact title, title prefix, artist
-		// match, then popularity. One clause.OrderBy expression holding the
-		// whole ordering: GORM drops a bare gorm.Expr in Order(), and chaining
-		// another Order() after an expression discards the expression.
-		score := m.score()
-		db = db.Order(clause.OrderBy{Expression: clause.Expr{
-			SQL: score.SQL + ` DESC, CASE WHEN key LIKE ? ESCAPE '\' THEN 0 WHEN key LIKE ? ESCAPE '\' THEN 1 WHEN key LIKE ? ESCAPE '\' THEN 2 ELSE 3 END, ` +
-				`source_count DESC, plays DESC, id DESC`,
-			Vars:               append(score.Vars, "%|"+likeEscape(folded), "%|"+likeEscape(folded)+"%", likeEscape(folded)+"|%"),
-			WithoutParentheses: true}})
-	case "plays":
-		db = db.Order("plays DESC").Order("id DESC")
-	case "title":
-		db = db.Order("LOWER(title)").Order("id")
-	default: // recent
-		db = db.Order("first_seen_at DESC").Order("id DESC")
-	}
-	// Nothing past the last match: skip the query (deep pages are the
-	// costliest OFFSETs).
-	if int64((page-1)*limit) < res.Total {
-		if err := db.Preload("Sources").Offset((page - 1) * limit).Limit(limit).Find(&res.Songs).Error; err != nil {
-			return res, err
+		switch sort {
+		case "relevance":
+			// closest match first, then: exact title, title prefix, artist
+			// match, then popularity. One clause.OrderBy expression holding the
+			// whole ordering: GORM drops a bare gorm.Expr in Order(), and chaining
+			// another Order() after an expression discards the expression.
+			score := m.score()
+			db = db.Order(clause.OrderBy{Expression: clause.Expr{
+				SQL: score.SQL + ` DESC, CASE WHEN key LIKE ? ESCAPE '\' THEN 0 WHEN key LIKE ? ESCAPE '\' THEN 1 WHEN key LIKE ? ESCAPE '\' THEN 2 ELSE 3 END, ` +
+					`source_count DESC, plays DESC, id DESC`,
+				Vars:               append(score.Vars, "%|"+likeEscape(folded), "%|"+likeEscape(folded)+"%", likeEscape(folded)+"|%"),
+				WithoutParentheses: true}})
+		case "plays":
+			db = db.Order("plays DESC").Order("id DESC")
+		case "title":
+			db = db.Order("LOWER(title)").Order("id")
+		default: // recent
+			db = db.Order("first_seen_at DESC").Order("id DESC")
 		}
-	}
-	if res.Songs == nil {
-		res.Songs = []Song{}
-	}
-	if len(words) > 0 && len(res.Songs) > 0 {
-		// exact: the best result holds every word as typed (or squashed);
-		// close: it doesn't, so these are typo or partial matches
-		res.Match = "close"
-		top := res.Songs[0]
-		if containsAll(SearchText(top.Title, top.Artist, top.Featured, top.Key), words) {
-			res.Match = "exact"
+		// Nothing past the last match: skip the query (deep pages are the
+		// costliest OFFSETs).
+		if int64((page-1)*limit) < res.Total {
+			if err := db.Preload("Sources").Offset((page - 1) * limit).Limit(limit).Find(&res.Songs).Error; err != nil {
+				return err
+			}
 		}
-		res.Loose = res.Match == "close"
+		if res.Songs == nil {
+			res.Songs = []Song{}
+		}
+		if len(words) > 0 && len(res.Songs) > 0 {
+			// exact: the best result holds every word as typed (or squashed);
+			// close: it doesn't, so these are typo or partial matches
+			res.Match = "close"
+			top := res.Songs[0]
+			if containsAll(SearchText(top.Title, top.Artist, top.Featured, top.Key), words) {
+				res.Match = "exact"
+			}
+			res.Loose = res.Match == "close"
+			if res.Loose {
+				res.Suggest = Suggest(folded, top)
+			}
+		}
+		return nil
+	}
+	if err := local(); err != nil {
+		return res, err
+	}
+	// live=auto (default): the catalog answers first, in milliseconds. Only
+	// a weak answer (nothing exact, or less than a page) on page 1 asks the
+	// providers live (up to CATALOG_LIVE_TIMEOUT), then answers again with
+	// what they added.
+	if canLive && q.Live == LiveAuto && page == 1 && (res.Match != "exact" || res.Total < int64(limit)) {
+		res.Live, res.Ingested = s.live(ctx, text)
+		if res.Ingested.NewSongs > 0 || res.Ingested.Attached > 0 || res.Ingested.Inserted > 0 {
+			if err := local(); err != nil {
+				return res, err
+			}
+		}
 	}
 	s.Cache.Set(ctx, resultKey, res, s.ResultTTL)
 	return res, nil

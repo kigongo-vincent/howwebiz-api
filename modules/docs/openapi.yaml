@@ -426,9 +426,10 @@ paths:
         Copies are matched on normalized primary artist + title (case, accents, punctuation, "(Official Audio)",
         "ft. …" ignored; remix/live/acoustic versions kept apart).
 
-        **Live search** (`live=auto`, the default): the first page of a text search also asks every provider's
-        own search in parallel (per-provider timeout, results cached per provider+query), ingests what they
-        return, and then answers from the merged catalog. `meta.live` reports each provider's outcome.
+        **Live search** (`live=auto`, the default): the catalog answers first. Only when that answer is weak on
+        page 1 (no exact match, or fewer results than a page) are the providers' own searches asked in parallel
+        (per-provider timeout, results cached per provider+query); what they return is ingested and the catalog
+        answers again. `live=true` always asks them first. `meta.live` reports each provider's outcome.
       parameters:
         - { name: q, in: query, description: 'Title, artist or featured artist (accent/punctuation-insensitive; all words must match).', schema: { type: string } }
         - { name: artist, in: query, description: Primary artist, schema: { type: string } }
@@ -465,9 +466,40 @@ paths:
                               ("ssebatta" finds "Ssebata"). With sort=relevance (the default with q) results blend:
                               exact matches first, then close ones. Other sorts list only songs matching every word.
                           loose: { type: boolean, description: "true when match is close" }
+                          suggest: { type: string, description: 'Did you mean: the query respelled after the best result, when that result is only a close match ("essense wizkid" -> "essence wizkid").' }
                           live: { type: array, items: { $ref: '#/components/schemas/ProviderSearch' } }
                           ingested: { $ref: '#/components/schemas/IngestStats' }
         '400': { $ref: '#/components/responses/BadRequest' }
+  /api/v1/songs/suggest:
+    get:
+      tags: [catalog]
+      summary: Search as you type
+      description: >-
+        Songs for what the user has typed so far: every word but the last must be in the song, the last may be the
+        start of a word ("calm d" -> Calm Down; "dole yomw" -> Dole Y'omwaana). Titles starting with the input first,
+        then popular songs. Songs only (no mixes). Cached for 5 minutes.
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string, minLength: 2, maxLength: 200 } }
+        - { name: limit, in: query, schema: { type: integer, default: 8, minimum: 1, maximum: 20 } }
+      responses:
+        '200':
+          description: Suggestions, best first (empty for under 2 letters)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id: { type: integer }
+                            title: { type: string }
+                            artist: { type: string }
+                            coverUrl: { type: string }
   /api/v1/songs/{id}:
     get:
       tags: [songs]

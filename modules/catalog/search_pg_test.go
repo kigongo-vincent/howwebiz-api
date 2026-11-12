@@ -75,10 +75,11 @@ func TestSearchFuzzyPostgres(t *testing.T) {
 			t.Errorf("%q: match=%q got %v, want %q first (%s)", c.q, res.Match, titles(res), c.top, c.match)
 		}
 	}
-	// precision over recall: a short word with a letter missing ("sebta",
-	// similarity 0.5) stays under pg_trgm's 0.6 threshold and matches nothing
-	if res, _ := svc.Search(context.Background(), Query{Q: "sebta", Limit: 10, Live: LiveOff}); len(res.Songs) != 0 {
-		t.Errorf("sebta: got %v", titles(res))
+	// no dead ends: nothing as typed and nothing within the usual typo
+	// distance ("sebta", similarity 0.5) -> the closest songs, as a close match
+	if res, _ := svc.Search(context.Background(), Query{Q: "sebta", Limit: 10, Live: LiveOff}); len(res.Songs) == 0 ||
+		res.Songs[0].Title != "Dole Y'omwana" || res.Match != "close" {
+		t.Errorf("sebta: match=%q %v", res.Match, titles(res))
 	}
 	// a word nobody spelled like that, and nothing like it: nothing
 	if res, _ := svc.Search(context.Background(), Query{Q: "zzqxv", Limit: 10, Live: LiveOff}); len(res.Songs) != 0 {
