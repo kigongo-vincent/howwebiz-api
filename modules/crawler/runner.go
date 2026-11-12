@@ -298,10 +298,10 @@ var (
 	slots     chan struct{}
 )
 
-// acquireSlot waits for one of the CRAWL_CONCURRENCY (default 4) crawl
+// acquireSlot waits for one of the CRAWL_CONCURRENCY (default 3) crawl
 // slots; false when ctx ends first (shutdown: the run is interrupted).
 func acquireSlot(ctx context.Context, log *slog.Logger) (release func(), ok bool) {
-	slotsOnce.Do(func() { slots = make(chan struct{}, max(1, base.EnvInt("CRAWL_CONCURRENCY", 4))) })
+	slotsOnce.Do(func() { slots = make(chan struct{}, max(1, base.EnvInt("CRAWL_CONCURRENCY", 3))) })
 	select {
 	case slots <- struct{}{}:
 		return func() { <-slots }, true

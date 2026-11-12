@@ -147,3 +147,38 @@ func TestBaseTitle(t *testing.T) {
 		}
 	}
 }
+
+func TestRelevanceBoundedCandidatesKeepExactMatch(t *testing.T) {
+	db := testDB(t)
+	now := time.Now().UTC()
+	songs := make([]Song, 0, candidateCap+300)
+	for i := range candidateCap + 300 { // more broad matches than one lookup takes
+		title := fmt.Sprintf("King Tune %d", i)
+		key := fmt.Sprintf("artist %d|king tune %d", i, i)
+		songs = append(songs, Song{Key: key, Title: title, Artist: fmt.Sprintf("Artist %d", i), Kind: KindSong,
+			AudioURL: "https://x/a.mp3", Plays: int64(1000 + i), FirstSeenAt: now, UpdatedAt: now,
+			SearchText: SearchText(title, fmt.Sprintf("Artist %d", i), nil, key), SearchVersion: SearchTextVersion})
+	}
+	exact := Song{Key: "king saha|vimba", Title: "Vimba", Artist: "King Saha", Kind: KindSong, AudioURL: "https://x/v.mp3",
+		FirstSeenAt: now, UpdatedAt: now, SearchText: SearchText("Vimba", "King Saha", nil, "king saha|vimba"), SearchVersion: SearchTextVersion}
+	songs = append(songs, exact)
+	if err := db.CreateInBatches(songs, 200).Error; err != nil {
+		t.Fatal(err)
+	}
+	s := &SearchService{DB: db, Ingester: &Ingester{DB: db}}
+	s.textIndexed.Store(true)
+	for _, q := range []string{"vimba king saha", "king saha vimba", "vimba"} {
+		res, err := s.Search(context.Background(), Query{Q: q, Limit: 10, Live: LiveOff})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(res.Songs) == 0 || res.Songs[0].Title != "Vimba" {
+			t.Fatalf("%q: first result %v", q, res.Songs[:min(1, len(res.Songs))])
+		}
+	}
+	// a broad single word is answered from a bounded set, still most played first
+	res, err := s.Search(context.Background(), Query{Q: "king", Limit: 5, Live: LiveOff})
+	if err != nil || len(res.Songs) != 5 || res.Total > int64(candidateCap+1) {
+		t.Fatalf("broad: %v total %d", err, res.Total)
+	}
+}

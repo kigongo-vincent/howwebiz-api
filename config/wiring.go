@@ -164,6 +164,22 @@ func WireAPI(ctx context.Context, db, apiDB *gorm.DB, app *fiber.App, background
 	}
 	if background {
 		go func() { _ = base.Safe("database upkeep", func() { upkeep(true) }) }()
+		// browse totals, counted in the background (a request never counts the whole catalog)
+		go func() {
+			every := base.EnvDuration("CATALOG_TOTALS_EVERY", 10*time.Minute)
+			for {
+				_ = base.Safe("catalog totals", func() {
+					if err := searchSvc.RefreshTotals(ctx); err != nil && ctx.Err() == nil {
+						slog.Warn("catalog: refresh totals", "err", err)
+					}
+				})
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(every):
+				}
+			}
+		}()
 		hooks := []func(){audioCom.DailySync, mom.DailySync}
 		for _, name := range sites.Names() {
 			hooks = append(hooks, sites[name].DailySync)

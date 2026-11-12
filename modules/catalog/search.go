@@ -473,7 +473,8 @@ func (s *SearchService) Search(ctx context.Context, q Query) (Result, error) {
 			if sort == "relevance" {
 				// Blend: any song matching a word (as typed, squashed, or with a
 				// typo) is a candidate; the score below ranks the closest first.
-				db = db.Where(m.any())
+				// Only a bounded candidate set is scored (see candidates).
+				db = db.Where(m.candidates())
 			} else {
 				// An explicit order (recent, plays, title) lists only songs
 				// matching every word, so partial matches never lead the list.
@@ -496,6 +497,10 @@ func (s *SearchService) Search(ctx context.Context, q Query) (Result, error) {
 			if filtered {
 				sub := db.Session(&gorm.Session{}).Select("1").Limit(FilteredCountCap)
 				err = s.DB.Table("(?) AS capped", sub).Count(&n).Error
+			} else if s.Cache.Get(ctx, lastKey, &n) {
+				// the whole catalog: RefreshTotals keeps this current in the
+				// background; counting 600k rows per request starved the database
+				err = nil
 			} else {
 				err = db.Session(&gorm.Session{}).Count(&n).Error
 			}
@@ -504,7 +509,10 @@ func (s *SearchService) Search(ctx context.Context, q Query) (Result, error) {
 				res.Total = n
 				s.Cache.Set(ctx, countKey, n, s.CountTTL)
 				s.Cache.Set(ctx, lastKey, n, upkeepStateTTL)
-			case !s.Cache.Get(ctx, lastKey, &res.Total):
+			case s.Cache.Get(ctx, lastKey, &res.Total):
+			case !filtered && s.estimate(ctx, &res.Total):
+				// no total known yet: Postgres's own row estimate
+			default:
 				return err
 			}
 		}
@@ -577,4 +585,42 @@ func (s *SearchService) Get(id uint) (Song, error) {
 	var song Song
 	err := s.DB.Preload("Sources").First(&song, id).Error
 	return song, err
+}
+
+// estimate: the planner's row count for catalog_songs (Postgres; instant).
+func (s *SearchService) estimate(ctx context.Context, n *int64) bool {
+	if s.DB.Dialector.Name() != "postgres" {
+		return false
+	}
+	var est float64
+	if err := s.DB.WithContext(ctx).Raw(`SELECT reltuples FROM pg_class WHERE relname = 'catalog_songs'`).Scan(&est).Error; err != nil || est <= 0 {
+		return false
+	}
+	*n = int64(est)
+	return true
+}
+
+// RefreshTotals counts the unfiltered catalog (per type, with and without
+// the audio filter) on the background pool and stores the totals the
+// browse endpoints read, so no request counts the whole table.
+func (s *SearchService) RefreshTotals(ctx context.Context) error {
+	db := s.bg().WithContext(ctx)
+	for _, kind := range []string{KindSong, KindMix, "all"} {
+		for _, hasAudio := range []string{"", "true"} {
+			q := db.Model(&Song{})
+			if kind != "all" {
+				q = q.Where("kind = ?", kind)
+			}
+			if hasAudio == "true" {
+				q = q.Where("audio_url <> ''")
+			}
+			var n int64
+			if err := q.Count(&n).Error; err != nil {
+				return err
+			}
+			filters := []any{"", "", "", "", hasAudio, kind}
+			s.Cache.Set(ctx, "count-last:"+cacheKey(filters...), n, upkeepStateTTL)
+		}
+	}
+	return nil
 }

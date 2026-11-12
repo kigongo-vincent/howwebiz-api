@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"fmt"
 	"strings"
 	"unicode/utf8"
 
@@ -206,4 +207,68 @@ func containsAll(text string, words []string) bool {
 		}
 	}
 	return true
+}
+
+// candidateCap bounds how many songs one broad lookup adds to the songs a
+// relevance search scores ("king", "edy" match tens of thousands; scoring
+// all of them took 15-35s on a busy database).
+const candidateCap = 1500
+
+// candidates selects the songs a relevance search scores, from cheap,
+// separately bounded lookups:
+//   - the whole query as a phrase or squashed (the song typed in full),
+//   - songs holding every word,
+//   - each word's typo matches (already capped, see fuzzyIDs),
+//   - songs holding any word, at most candidateCap,
+//   - for a query of only one- or two-letter words: titles starting with it
+//     (a prefix on idx_catalog_songs_title_prefix, not a scan).
+//
+// The strong matches are always in; only the long tail of a broad word is
+// cut. Each lookup is wrapped as a subquery so its LIMIT is legal in a
+// UNION on both Postgres and SQLite.
+func (m matcher) candidates() clause.Expr {
+	var parts []clause.Expr
+	limited := func(where clause.Expr, n int) {
+		parts = append(parts, clause.Expr{
+			SQL:  fmt.Sprintf("SELECT id FROM (SELECT id FROM catalog_songs WHERE %s LIMIT %d) AS c%d", where.SQL, n, len(parts)),
+			Vars: where.Vars})
+	}
+	if len(m.words) > 1 {
+		phrase := m.exact(strings.Join(m.words, " "))
+		squashed := m.exact(strings.Join(m.words, ""))
+		limited(clause.Expr{SQL: "(" + phrase.SQL + " OR " + squashed.SQL + ")", Vars: append(phrase.Vars, squashed.Vars...)}, 500)
+		limited(m.all(), candidateCap)
+	}
+	for _, w := range m.words {
+		if m.canFuzz(w) {
+			parts = append(parts, clause.Expr{SQL: "SELECT id FROM catalog_songs WHERE id IN (?)", Vars: []any{m.fuzzy[w]}})
+		}
+	}
+	short := true
+	for _, w := range m.words {
+		short = short && utf8.RuneCountInString(w) < 3
+	}
+	if short && m.folded != "" {
+		limited(clause.Expr{SQL: `LOWER(title) LIKE ? ESCAPE '\'`, Vars: []any{likeEscape(strings.ToLower(m.folded)) + "%"}}, 500)
+	}
+	limited(m.exactAny(), candidateCap)
+	e := join(parts, " UNION ")
+	return clause.Expr{SQL: "id IN " + e.SQL, Vars: e.Vars}
+}
+
+// exactAny: any word as typed (no typo branches: those are added apart).
+// Words under three letters only count when the query has nothing longer.
+func (m matcher) exactAny() clause.Expr {
+	var out []clause.Expr
+	for _, w := range m.words {
+		if utf8.RuneCountInString(w) >= 3 {
+			out = append(out, m.exact(w))
+		}
+	}
+	if len(out) == 0 {
+		for _, w := range m.words {
+			out = append(out, m.exact(w))
+		}
+	}
+	return join(out, " OR ")
 }

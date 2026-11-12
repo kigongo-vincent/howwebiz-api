@@ -334,7 +334,9 @@ func Indexes(dialect string) []string {
 			`CREATE INDEX IF NOT EXISTS idx_catalog_songs_key_prefix ON catalog_songs (key text_pattern_ops)`,
 			// the rows still waiting for search_text: "is search ready?" and
 			// the backfill read this tiny index instead of the whole table
-			`CREATE INDEX IF NOT EXISTS idx_catalog_songs_search_empty ON catalog_songs (id) WHERE search_text = ''`)
+			`CREATE INDEX IF NOT EXISTS idx_catalog_songs_search_empty ON catalog_songs (id) WHERE search_text = ''`,
+			// one- and two-letter searches ("i", "nb"): a title prefix, not a scan
+			`CREATE INDEX IF NOT EXISTS idx_catalog_songs_title_prefix ON catalog_songs (LOWER(title) text_pattern_ops)`)
 		// superseded by search_text (and never usable inside the old OR)
 		stmts = append(stmts,
 			`DROP INDEX IF EXISTS idx_catalog_songs_key_trgm`,
