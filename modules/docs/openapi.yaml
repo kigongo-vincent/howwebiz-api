@@ -24,6 +24,16 @@ info:
 
     **Auth**: when the server sets `API_KEY`, endpoints marked 🔒 need the header `X-API-Key`.
 
+    **Caching**: read endpoints (`/songs…`, `/lists…`, `/charts…`, `/genres…`, `/providers`, `/howwe/…`) are cached
+    for about 2 minutes. The `X-Cache` response header says how a response was served: `HIT` (from cache),
+    `MISS` (just built), or `STALE` (the database was slow or failing, so the last good answer, up to 24h old,
+    was served instead of an error). Popular pages are rebuilt in the background before they expire.
+
+    **Discovery**: `GET /api/v1/songs?sort=discover` is a shuffled feed for home screens and radio, and
+    `GET /api/v1/songs/{id}/next` recommends what to play after a song. Both are weighted at random, so they
+    change between seeds but stay ordered by popularity, freshness and region. Pass the returned `meta.seed`
+    back to page through one feed or to replay a list exactly.
+
     Crawls run in the background: a `POST` returns **202** with the run; follow it at
     `GET /api/v1/crawl/runs/{id}`. Each source runs one crawl at a time (**409** otherwise).
 servers:
@@ -437,7 +447,19 @@ paths:
         - { name: provider, in: query, description: Only songs available from this provider, schema: { type: string, enum: [howwe, ugamusic, pearltunes, mdundo, momuziki, mzikii, ugmuziki, busoga, audiocom, audius, fma, ncs, hearthis, incompetech, internetarchive] } }
         - { name: type, in: query, schema: { type: string, enum: [song, mix, all], default: song }, description: 'song: songs only. mix: DJ mixes, nonstops and mixtapes (flagged by the provider, titled like one, or 25+ minutes long). all: both.' }
         - $ref: '#/components/parameters/HasAudio'
-        - { name: sort, in: query, schema: { type: string, enum: [relevance, recent, plays, title] }, description: 'Default: relevance with q, else recent.' }
+        - name: sort
+          in: query
+          schema: { type: string, enum: [relevance, recent, plays, title, discover] }
+          description: |
+            Default: relevance with q, else recent.
+            **discover**: a weighted shuffle of the catalog (not with `q`). Each song's chance of an early place
+            grows with its popularity (plays), reach (how many providers carry it), freshness (release, or when
+            first seen; halves about every three weeks) and, with `region`, being from that region. Pools: the
+            most played, the newest, a random stretch of the long tail, and the region's songs. Artists are spread
+            out: never twice within three places, at most two per twenty. Combines with `genre`, `artist`, `type`.
+            The feed holds up to 600 songs; `pagination.total` is its size. Page with the same `seed`.
+        - { name: region, in: query, schema: { type: string, enum: [ug, ke, tz, rw, ng, gh, za, africa, global] }, description: 'With sort=discover: favour songs from this region (by the providers that carry them and by genre: Bongo Flava = tz, Amapiano = za, Highlife = gh, Kapuka/Genge = ke, …). africa covers every African region.' }
+        - { name: seed, in: query, schema: { type: string }, description: 'With sort=discover: any text. The same seed (and filters) gives the same feed, so pages never overlap or repeat. Default: one feed per hour (returned in meta.seed: send it with the next pages).' }
         - { name: live, in: query, schema: { type: string, enum: [auto, 'true', 'false'], default: auto } }
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/Limit'
@@ -469,7 +491,54 @@ paths:
                           suggest: { type: string, description: 'Did you mean: the query respelled after the best result, when that result is only a close match ("essense wizkid" -> "essence wizkid").' }
                           live: { type: array, items: { $ref: '#/components/schemas/ProviderSearch' } }
                           ingested: { $ref: '#/components/schemas/IngestStats' }
+                          sort: { type: string, description: "discover, when the feed was shuffled" }
+                          seed: { type: string, description: "sort=discover: the seed used; pass it back with ?seed= for the next pages" }
+                          region: { type: string }
         '400': { $ref: '#/components/responses/BadRequest' }
+  /api/v1/songs/{id}/next:
+    get:
+      tags: [songs]
+      summary: Up next — what to play after a song
+      description: |
+        Recommendations for after song `{id}`, best suited first (weighted at random, so a replay doesn't repeat
+        the same list unless the seed is the same). Not just "more of the same title or artist": each candidate is
+        weighed by
+        - **genre** (also near spellings: "Afro Beat" and "Afrobeats"),
+        - **collaborators**: artists the song features, artists who feature its artist, and artists sharing a guest,
+        - **region** (the song's own, or `region`),
+        - **era** (released or first seen within months of it),
+        - **reach** similar to the song's (plays), and its own popularity and freshness,
+        - **length** and **title themes** (shared words: language, subject).
+
+        Never another version of the same song (remixes, live, acoustic, "official audio", other artists' covers of
+        the title). The same artist appears at most twice, never back to back. Songs follow songs, mixes follow mixes.
+        For radio/autoplay: send the ids already played in `exclude` and the same `seed` across calls.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+        - { name: limit, in: query, schema: { type: integer, default: 20, minimum: 1, maximum: 50 } }
+        - { name: region, in: query, schema: { type: string, enum: [ug, ke, tz, rw, ng, gh, za, africa, global] }, description: "Favour this region (default: the song's own)." }
+        - { name: seed, in: query, schema: { type: string }, description: 'Any text: the same seed gives the same list. Default: changes every hour (returned in meta.seed).' }
+        - { name: exclude, in: query, schema: { type: string, example: '12,345,6789' }, description: Comma-separated song ids already played (up to 200). }
+      responses:
+        '200':
+          description: Recommended songs, best first
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/CatalogSong' } }
+                      meta:
+                        type: object
+                        properties:
+                          after:
+                            type: object
+                            properties: { id: { type: integer }, title: { type: string }, artist: { type: string } }
+                          seed: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /api/v1/songs/suggest:
     get:
       tags: [catalog]

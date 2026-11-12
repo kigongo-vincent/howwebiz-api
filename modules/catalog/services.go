@@ -30,7 +30,7 @@ type Service struct {
 	Providers []ProviderInfo
 }
 
-var sorts = []string{"relevance", "recent", "plays", "title"}
+var sorts = []string{"relevance", "recent", "plays", "title", "discover"}
 
 var types = []string{KindSong, KindMix, "all"}
 
@@ -40,7 +40,11 @@ var types = []string{KindSong, KindMix, "all"}
 //	?artist=    primary artist
 //	?genre=  ?provider=  ?hasAudio=
 //	?type=      song (default) | mix (DJ mixes, nonstops, mixtapes) | all
-//	?sort=      relevance (default with q) | recent | plays | title
+//	?sort=      relevance (default with q) | recent | plays | title | discover
+//	            discover: a weighted shuffle (popularity, reach, freshness,
+//	            region), artists spread out; not with q
+//	?region=    ug | ke | tz | rw | ng | gh | za | africa | global (discover: in-region songs come up more)
+//	?seed=      discover: any text; the same seed gives the same feed (page with it)
 //	?live=      auto (default: the catalog answers; providers are asked live only when that answer is weak) | true | false
 //	?page= ?limit=
 func (s *Service) List(c *fiber.Ctx) error {
@@ -66,6 +70,30 @@ func (s *Service) List(c *fiber.Ctx) error {
 			return base.API_ERROR(c, "hasAudio must be true or false")
 		}
 		q.HasAudio = &b
+	}
+	region := strings.ToLower(c.Query("region"))
+	if region != "" && !slices.Contains(Regions, region) {
+		return base.API_ERROR(c, "region must be one of: "+strings.Join(Regions, ", "))
+	}
+	if q.Sort == "discover" {
+		if strings.TrimSpace(q.Q) != "" {
+			return base.API_ERROR(c, "sort=discover can't be combined with q (use sort=relevance to search)")
+		}
+		seed := c.Query("seed")
+		if seed == "" {
+			// one feed per hour by default: pages of it line up, and it changes over the day
+			seed = time.Now().UTC().Format("2006010215")
+		}
+		songs, total, err := s.Search.Discover(c.UserContext(), DiscoverQuery{Genre: q.Genre, Artist: q.Artist, Region: region,
+			Kind: q.Type, Seed: SeedFor(seed, region, q.Genre, q.Artist, q.Type), Page: p.Page, Limit: p.Limit})
+		if err != nil {
+			return base.API_FAIL(c, fiber.StatusInternalServerError, "failed to build the feed")
+		}
+		for i := range songs {
+			s.orderSources(&songs[i])
+		}
+		return c.JSON(base.APIResponse{Data: songs, Pagination: p.Controls(total, len(songs)),
+			Meta: fiber.Map{"sort": "discover", "seed": seed, "region": region}})
 	}
 	res, err := s.Search.Search(c.UserContext(), q)
 	if err != nil {
@@ -181,4 +209,49 @@ func (s *Service) Suggest(c *fiber.Ctx) error {
 		return base.API_FAIL(c, fiber.StatusInternalServerError, "failed to suggest songs")
 	}
 	return c.JSON(base.APIResponse{Data: out})
+}
+
+// Next is "up next" after a song: similar songs by genre, collaborators,
+// region, era, popularity, length and title themes; never another version
+// of the same song; the same artist only now and then.
+//
+//	?limit=    1-50 (default 20)
+//	?region=   favour a region (default: the song's own)
+//	?seed=     any text; the same seed gives the same list (default: changes hourly)
+//	?exclude=  comma-separated ids already played
+func (s *Service) Next(c *fiber.Ctx) error {
+	id, ok := base.ParamID(c, "id")
+	if !ok {
+		return base.API_ERROR(c, "invalid song id")
+	}
+	limit := c.QueryInt("limit", 20)
+	if limit < 1 || limit > 50 {
+		return base.API_ERROR(c, "limit must be 1-50")
+	}
+	region := strings.ToLower(c.Query("region"))
+	if region != "" && !slices.Contains(Regions, region) {
+		return base.API_ERROR(c, "region must be one of: "+strings.Join(Regions, ", "))
+	}
+	var exclude []uint
+	for _, x := range strings.Split(c.Query("exclude"), ",") {
+		if n, err := strconv.ParseUint(strings.TrimSpace(x), 10, 64); err == nil && len(exclude) < 200 {
+			exclude = append(exclude, uint(n))
+		}
+	}
+	seed := c.Query("seed")
+	if seed == "" {
+		seed = time.Now().UTC().Format("2006010215")
+	}
+	song, songs, err := s.Search.Next(c.UserContext(), id, NextQuery{Region: region, Limit: limit, Exclude: exclude,
+		Seed: SeedFor(seed, strconv.FormatUint(uint64(id), 10), region)})
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return base.API_FAIL(c, fiber.StatusNotFound, "song not found")
+	} else if err != nil {
+		return base.API_FAIL(c, fiber.StatusInternalServerError, "failed to recommend songs")
+	}
+	for i := range songs {
+		s.orderSources(&songs[i])
+	}
+	return c.JSON(base.APIResponse{Data: songs,
+		Meta: fiber.Map{"after": fiber.Map{"id": song.ID, "title": song.Title, "artist": song.Artist}, "seed": seed}})
 }
