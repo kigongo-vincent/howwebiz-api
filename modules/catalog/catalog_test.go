@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
@@ -329,5 +331,15 @@ func TestSearchLooseWhenNoSongHasEveryWord(t *testing.T) {
 	res, _ = svc.Search(context.Background(), Query{Q: "dole fik", Sort: "recent", Page: 1, Limit: 10, Live: LiveOff})
 	if len(res.Songs) != 1 || res.Songs[0].Title != "Dole" {
 		t.Fatalf("sorted: songs=%v", res.Songs)
+	}
+}
+
+func TestClipLongFields(t *testing.T) {
+	long := strings.Repeat("Ã", 2000)
+	if got := clip(long, maxFieldRunes); utf8.RuneCountInString(got) != maxFieldRunes {
+		t.Fatalf("clip: %d runes", utf8.RuneCountInString(got))
+	}
+	if clip("Sitya Loss", maxFieldRunes) != "Sitya Loss" {
+		t.Fatal("short value changed")
 	}
 }

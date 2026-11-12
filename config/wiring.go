@@ -122,8 +122,12 @@ func WireAPI(ctx context.Context, db, apiDB *gorm.DB, app *fiber.App, background
 		Cache:         rc,
 		ResultTTL:     base.EnvDuration("CATALOG_RESULT_CACHE_TTL", 60*time.Second),
 		CountTTL:      base.EnvDuration("CATALOG_COUNT_CACHE_TTL", 5*time.Minute),
-		BackfillPause: base.EnvDuration("CATALOG_BACKFILL_PAUSE", 100*time.Millisecond)}
+		BackfillPause: base.EnvDuration("CATALOG_BACKFILL_PAUSE", 100*time.Millisecond),
+		Background:    db}
 	searchSvc.Fuzzy = trigramReady(apiDB)
+	// search_text was already filled by an earlier run: use its index from
+	// the first request, not after the upkeep below gets to it
+	searchSvc.RestoreIndexState(ctx)
 	cat := &catalog.Service{DB: apiDB, Ingester: ingester, Indexer: indexer, Providers: providers, Search: searchSvc}
 
 	deps := Dependencies{DB: db, APIDB: apiDB, App: app, Crawler: engine, AudioCom: audioCom, Momuziki: mom, Catalog: cat, Sites: sites, Cache: rc}
@@ -135,7 +139,10 @@ func WireAPI(ctx context.Context, db, apiDB *gorm.DB, app *fiber.App, background
 	upkeep := func(purge bool) {
 		start := time.Now()
 		base.EnsureIndexes(ctx, db, appIndexes(dialect))
-		if purge {
+		// The purge scans both tables (minutes on a strained database) and
+		// finds nothing in steady state: once a day is plenty. Without Redis
+		// it runs on every start, as before.
+		if purge && (rc == nil || rc.SetNX(ctx, "upkeep:purge-without-audio", 24*time.Hour) || rc.Ping(ctx) != nil) {
 			// Enforce "only songs with audio" on data stored before the rule.
 			if st, err := ingester.PurgeWithoutAudio(time.Now().UTC()); err != nil {
 				slog.Error("catalog: purge songs without audio", "err", err)

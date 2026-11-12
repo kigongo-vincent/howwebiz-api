@@ -27,6 +27,7 @@ import (
 	"github.com/kigongo-vincent/howwebiz-api/modules/crawler"
 	"github.com/kigongo-vincent/howwebiz-api/modules/docs"
 	"github.com/kigongo-vincent/howwebiz-api/modules/genre"
+	"github.com/kigongo-vincent/howwebiz-api/modules/httpcache"
 	"github.com/kigongo-vincent/howwebiz-api/modules/momuziki"
 	"github.com/kigongo-vincent/howwebiz-api/modules/providers/sitecrawl"
 	"github.com/kigongo-vincent/howwebiz-api/modules/search"
@@ -42,6 +43,9 @@ func RegisterAppRoutes(deps Dependencies) {
 		log.Fatalf("api docs: %v", err)
 	}
 	v1 := deps.App.Group("/api/v1")
+	// Read endpoints answer from Redis when they can, and from the last good
+	// answer when the database fails them (see httpcache).
+	v1.Use(httpcache.New(HTTPCacheOptions(deps)))
 
 	v1.Get("/health", func(c *fiber.Ctx) error {
 		// the API pool, with a deadline: a starved or slow database makes
@@ -260,4 +264,28 @@ func logLevel() gormlogger.LogLevel {
 		return gormlogger.Info
 	}
 	return gormlogger.Warn
+}
+
+// HTTPCacheOptions: which read endpoints the response cache covers.
+func HTTPCacheOptions(deps Dependencies) httpcache.Options {
+	return httpcache.Options{
+		Cache: deps.Cache,
+		Prefixes: []string{"/api/v1/songs", "/api/v1/lists", "/api/v1/charts", "/api/v1/genres",
+			"/api/v1/providers", "/api/v1/howwe/", "/api/v1/momuziki/songs", "/api/v1/momuziki/categories",
+			"/api/v1/momuziki/search"},
+		Skip:     []string{"/status"},
+		FreshTTL: base.EnvDuration("HTTP_CACHE_TTL", 2*time.Minute),
+		StaleTTL: base.EnvDuration("HTTP_CACHE_STALE_TTL", 24*time.Hour),
+	}
+}
+
+// StartCacheWarmer keeps the most requested pages rebuilt in Redis.
+func StartCacheWarmer(ctx context.Context, deps Dependencies) {
+	if deps.Cache == nil || !base.EnvBool("HTTP_CACHE_WARM", true) {
+		return
+	}
+	w := httpcache.Warmer{App: deps.App, Cache: deps.Cache,
+		Every: base.EnvDuration("HTTP_CACHE_WARM_EVERY", 90*time.Second),
+		Top:   base.EnvInt("HTTP_CACHE_WARM_TOP", 25)}
+	go func() { _ = base.Safe("cache warmer", func() { w.Run(ctx) }) }()
 }

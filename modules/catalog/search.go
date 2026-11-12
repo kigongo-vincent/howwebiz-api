@@ -88,6 +88,9 @@ type SearchService struct {
 	// textIndexed: every row has search_text, so text queries use its
 	// trigram index (until then, the original per-column match).
 	textIndexed atomic.Bool
+	// Background runs upkeep (the search_text backfill): no statement
+	// timeout, and off the pool requests use. Nil: DB.
+	Background *gorm.DB
 	// BackfillPause is slept between PrepareSearchText batches so a
 	// backfill of the whole catalog never saturates a small database.
 	BackfillPause time.Duration
@@ -101,6 +104,36 @@ const cacheNS = "catalog"
 // FilteredCountCap: a filtered search counts up to this many matches, no further
 const FilteredCountCap = 5000
 
+// Redis keys remembering upkeep already done on the existing data, so a
+// restart neither falls back to the slow per-column search nor rescans
+// the whole catalog.
+const (
+	readyKey       = "catalog:searchtext:ready"
+	backfilledKey  = "catalog:searchtext:done:v"
+	upkeepStateTTL = 30 * 24 * time.Hour
+)
+
+func (s *SearchService) bg() *gorm.DB {
+	if s.Background != nil {
+		return s.Background
+	}
+	return s.DB
+}
+
+// RestoreIndexState switches text queries to the search_text index at
+// once when a previous run already found it filled (one Redis lookup, so
+// it can run on the boot path).
+func (s *SearchService) RestoreIndexState(ctx context.Context) {
+	if s.Cache.Exists(ctx, readyKey) {
+		s.textIndexed.Store(true)
+	}
+}
+
+func (s *SearchService) markIndexed(ctx context.Context) {
+	s.textIndexed.Store(true)
+	s.Cache.Set(ctx, readyKey, true, upkeepStateTTL)
+}
+
 // Bump drops every cached result and total (after bulk changes).
 func (s *SearchService) Bump(ctx context.Context) { s.Cache.Bump(ctx, cacheNS) }
 
@@ -111,28 +144,45 @@ func (s *SearchService) Bump(ctx context.Context) { s.Cache.Bump(ctx, cacheNS) }
 // to do; safe to run while the API serves.
 func (s *SearchService) PrepareSearchText(ctx context.Context) error {
 	const batch = 1000
-	var empty bool
-	if err := s.DB.Raw(`SELECT EXISTS (SELECT 1 FROM catalog_songs WHERE search_text = '')`).Scan(&empty).Error; err != nil {
+	db := s.bg()
+	// A few rows without search_text (old ones being filled) don't make
+	// search worse; only a catalog mostly without it needs the slow path.
+	// With idx_catalog_songs_search_empty this reads a tiny index.
+	var empties int64
+	if err := db.Raw(`SELECT COUNT(*) FROM (SELECT 1 FROM catalog_songs WHERE search_text = '' LIMIT 500) AS e`).Scan(&empties).Error; err != nil {
 		return err
 	}
-	if !empty {
-		s.textIndexed.Store(true)
+	if empties < 500 {
+		s.markIndexed(ctx)
 	}
-	// MixMinMs shrank (25 -> 20 min): one targeted update instead of a
-	// full rewrite. Cheap when nothing matches.
-	if err := s.DB.Model(&Song{}).Where("kind = ? AND duration_ms >= ?", KindSong, MixMinMs).Update("kind", KindMix).Error; err != nil {
-		return err
+	// Existing data already rebuilt at this version (by a previous run):
+	// only rows still empty need work, found from the partial index; no
+	// pass over the whole catalog on every start.
+	doneKey := backfilledKey + fmt.Sprint(SearchTextVersion)
+	versionDone := s.Cache.Exists(ctx, doneKey)
+	if !versionDone {
+		// MixMinMs shrank (25 -> 20 min): one targeted update instead of a
+		// full rewrite. Cheap when nothing matches.
+		if err := db.Model(&Song{}).Where("kind = ? AND duration_ms >= ?", KindSong, MixMinMs).Update("kind", KindMix).Error; err != nil {
+			return err
+		}
 	}
 	var after uint
 	filled := 0
 	for ctx.Err() == nil {
 		var rows []Song
-		if err := s.DB.Select("id", "key", "title", "artist", "featured", "duration_ms").
-			Where("(search_version < ? OR search_text = '') AND id > ?", SearchTextVersion, after).Order("id").Limit(batch).Find(&rows).Error; err != nil {
+		q := db.Select("id", "key", "title", "artist", "featured", "duration_ms").Where("id > ?", after)
+		if versionDone {
+			q = q.Where("search_text = ''")
+		} else {
+			q = q.Where("search_version < ? OR search_text = ''", SearchTextVersion)
+		}
+		if err := q.Order("id").Limit(batch).Find(&rows).Error; err != nil {
 			return err
 		}
 		if len(rows) == 0 {
-			s.textIndexed.Store(true)
+			s.markIndexed(ctx)
+			s.Cache.Set(ctx, doneKey, true, upkeepStateTTL)
 			if filled > 0 {
 				slog.Info("catalog: search index ready", "backfilled", filled)
 			}
@@ -148,7 +198,7 @@ func (s *SearchService) PrepareSearchText(ctx context.Context) error {
 			ids[i] = r.ID
 		}
 		sql.WriteString(" END, search_version = ? WHERE id IN ?")
-		if err := s.DB.Exec(sql.String(), append(args, SearchTextVersion, ids)...).Error; err != nil {
+		if err := db.Exec(sql.String(), append(args, SearchTextVersion, ids)...).Error; err != nil {
 			return err
 		}
 		// mixes stored before kind existed
@@ -159,7 +209,7 @@ func (s *SearchService) PrepareSearchText(ctx context.Context) error {
 			}
 		}
 		if len(mixes) > 0 {
-			if err := s.DB.Model(&Song{}).Where("id IN ?", mixes).Update("kind", KindMix).Error; err != nil {
+			if err := db.Model(&Song{}).Where("id IN ?", mixes).Update("kind", KindMix).Error; err != nil {
 				return err
 			}
 		}
@@ -436,17 +486,27 @@ func (s *SearchService) Search(ctx context.Context, q Query) (Result, error) {
 		// walked tens of thousands of rows per request and, with many at
 		// once, starved the database for minutes. Nobody pages that far; the
 		// total reads "N+" past the cap (TotalCapped says so).
+		// A count the database can't answer in time (it is strained) falls
+		// back to the last one known: a total a few minutes old beats an error.
 		if res.Ingested.NewSongs > 0 || !s.Cache.Get(ctx, countKey, &res.Total) {
+			lastKey := "count-last:" + cacheKey(filters...)
 			filtered := len(words) > 0 || q.Genre != "" || q.Artist != "" || q.Provider != ""
+			var n int64
+			var err error
 			if filtered {
 				sub := db.Session(&gorm.Session{}).Select("1").Limit(FilteredCountCap)
-				if err := s.DB.Table("(?) AS capped", sub).Count(&res.Total).Error; err != nil {
-					return err
-				}
-			} else if err := db.Session(&gorm.Session{}).Count(&res.Total).Error; err != nil {
+				err = s.DB.Table("(?) AS capped", sub).Count(&n).Error
+			} else {
+				err = db.Session(&gorm.Session{}).Count(&n).Error
+			}
+			switch {
+			case err == nil:
+				res.Total = n
+				s.Cache.Set(ctx, countKey, n, s.CountTTL)
+				s.Cache.Set(ctx, lastKey, n, upkeepStateTTL)
+			case !s.Cache.Get(ctx, lastKey, &res.Total):
 				return err
 			}
-			s.Cache.Set(ctx, countKey, res.Total, s.CountTTL)
 		}
 
 		switch sort {

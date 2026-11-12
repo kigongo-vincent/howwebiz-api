@@ -27,6 +27,7 @@ func main() {
 	// the background for the server's lifetime
 	deps := config.WireAPI(ctx, db, apiDB, app, true)
 	config.RegisterAppRoutes(deps)
+	config.StartCacheWarmer(ctx, deps)
 
 	// 3. Serve until SIGINT/SIGTERM, then drain
 	port := base.Env("PORT", "3000")

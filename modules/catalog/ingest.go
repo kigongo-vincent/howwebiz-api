@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/kigongo-vincent/howwebiz-api/modules/scraper"
 	"gorm.io/datatypes"
@@ -77,6 +78,9 @@ func (in *Ingester) ingestBatch(batch []Track, now time.Time) (IngestStats, erro
 			continue
 		}
 		t.Genre = CleanGenre(t.Genre)
+		// A runaway field (mojibake repeated thousands of times) would
+		// overflow a btree index row (2704 bytes) and fail the whole batch.
+		t.Title, t.Artist = clip(t.Title, maxFieldRunes), clip(t.Artist, maxFieldRunes)
 		r := ref{t.Provider, t.ExternalID}
 		if _, ok := byRef[r]; !ok {
 			order = append(order, r)
@@ -148,7 +152,11 @@ func (in *Ingester) ingestBatch(batch []Track, now time.Time) (IngestStats, erro
 			key := ids[r].Key
 			songID, ok := songByKey[key]
 			if !ok {
-				s := Song{Key: key, Title: ids[r].Title, Artist: ids[r].Artist, FirstSeenAt: now, UpdatedAt: now}
+				// search_text from the start: a new song is searchable at once
+				// and never counts as "not indexed yet"
+				s := Song{Key: key, Title: ids[r].Title, Artist: ids[r].Artist, FirstSeenAt: now, UpdatedAt: now,
+					SearchText:    SearchText(ids[r].Title, ids[r].Artist, t.Featured, key),
+					SearchVersion: SearchTextVersion}
 				if err := tx.Create(&s).Error; err != nil {
 					return err
 				}
@@ -323,7 +331,10 @@ func Indexes(dialect string) []string {
 		// key can't serve LIKE under a non-C collation, so every artist
 		// lookup read the whole table. text_pattern_ops can.
 		stmts = append(stmts,
-			`CREATE INDEX IF NOT EXISTS idx_catalog_songs_key_prefix ON catalog_songs (key text_pattern_ops)`)
+			`CREATE INDEX IF NOT EXISTS idx_catalog_songs_key_prefix ON catalog_songs (key text_pattern_ops)`,
+			// the rows still waiting for search_text: "is search ready?" and
+			// the backfill read this tiny index instead of the whole table
+			`CREATE INDEX IF NOT EXISTS idx_catalog_songs_search_empty ON catalog_songs (id) WHERE search_text = ''`)
 		// superseded by search_text (and never usable inside the old OR)
 		stmts = append(stmts,
 			`DROP INDEX IF EXISTS idx_catalog_songs_key_trgm`,
@@ -339,7 +350,9 @@ func SearchIndexes(dialect string) []string {
 	if dialect != "postgres" {
 		return nil
 	}
-	return []string{`CREATE INDEX IF NOT EXISTS idx_catalog_songs_search_trgm ON catalog_songs USING gin (search_text gin_trgm_ops)`}
+	return []string{
+		`CREATE INDEX IF NOT EXISTS idx_catalog_songs_search_trgm ON catalog_songs USING gin (search_text gin_trgm_ops)`,
+	}
 }
 
 type PurgeStats struct {
@@ -406,4 +419,15 @@ func (in *Ingester) PurgeWithoutAudio(now time.Time) (PurgeStats, error) {
 		return nil
 	})
 	return st, err
+}
+
+// maxFieldRunes caps a stored title or artist (indexes have a row limit).
+const maxFieldRunes = 300
+
+func clip(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	r := []rune(s)
+	return strings.TrimSpace(string(r[:n]))
 }
