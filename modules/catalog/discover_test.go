@@ -182,3 +182,80 @@ func TestRelevanceBoundedCandidatesKeepExactMatch(t *testing.T) {
 		t.Fatalf("broad: %v total %d", err, res.Total)
 	}
 }
+
+func count(songs []Song, f func(Song) bool) int {
+	n := 0
+	for _, s := range songs {
+		if f(s) {
+			n++
+		}
+	}
+	return n
+}
+
+func TestRecommendFromGenreAndArtistSeeds(t *testing.T) {
+	s := seedCatalog(t)
+	ctx := context.Background()
+	jazz, err := s.Recommend(ctx, RecommendQuery{Genres: []string{"jazz"}, Seed: 3, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := count(jazz, func(x Song) bool { return x.Genre == "Jazz" }); n < 8 {
+		t.Fatalf("genre seed jazz: %d/%d jazz", n, len(jazz))
+	}
+	// an artist seed brings the artist's world (genre, collaborators), not
+	// only the artist: at most two of theirs
+	kenzo, err := s.Recommend(ctx, RecommendQuery{Artists: []string{"Eddy Kenzo"}, Seed: 3, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := count(kenzo, func(x Song) bool { return artistKey(x) == "eddy kenzo" }); n > 2 {
+		t.Fatalf("artist seed: %d of the artist's own songs", n)
+	}
+	if n := count(kenzo, func(x Song) bool { return x.Title == "Tubonge" }); n != 1 {
+		t.Fatal("the collaborator's song should come up for an artist seed")
+	}
+}
+
+func TestNextFollowsTheSessionNotJustTheSong(t *testing.T) {
+	s := seedCatalog(t)
+	ctx := context.Background()
+	var playing Song
+	s.DB.Where("title = ?", "Afro Tune 3").First(&playing)
+	var jazzIDs []uint
+	s.DB.Model(&Song{}).Where("genre = ?", "Jazz").Limit(5).Pluck("id", &jazzIDs)
+	jazzOf := func(h []uint) int {
+		_, songs, err := s.Next(ctx, playing.ID, NextQuery{Seed: 9, Limit: 12, History: h})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, x := range songs {
+			if slices.Contains(h, x.ID) {
+				t.Fatalf("history song %d suggested again", x.ID)
+			}
+		}
+		return count(songs, func(x Song) bool { return x.Genre == "Jazz" })
+	}
+	alone, withHistory := jazzOf(nil), jazzOf(jazzIDs)
+	if withHistory <= alone {
+		t.Fatalf("a jazz session should bring jazz: %d alone, %d with history", alone, withHistory)
+	}
+}
+
+func TestRecommendPopularityTarget(t *testing.T) {
+	s := seedCatalog(t)
+	avg := func(target float64) float64 {
+		songs, err := s.Recommend(context.Background(), RecommendQuery{Genres: []string{"AfroBeat"}, Popularity: &target, Seed: 5, Limit: 8})
+		if err != nil {
+			t.Fatal(err)
+		}
+		sum := 0.0
+		for _, x := range songs {
+			sum += popularity01(x.Plays)
+		}
+		return sum / float64(len(songs))
+	}
+	if hits, deep := avg(100), avg(0); hits <= deep {
+		t.Fatalf("popularity=100 should lean to hits: %.2f vs %.2f", hits, deep)
+	}
+}

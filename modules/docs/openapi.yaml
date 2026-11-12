@@ -29,10 +29,29 @@ info:
     `MISS` (just built), or `STALE` (the database was slow or failing, so the last good answer, up to 24h old,
     was served instead of an error). Popular pages are rebuilt in the background before they expire.
 
-    **Discovery**: `GET /api/v1/songs?sort=discover` is a shuffled feed for home screens and radio, and
-    `GET /api/v1/songs/{id}/next` recommends what to play after a song. Both are weighted at random, so they
-    change between seeds but stay ordered by popularity, freshness and region. Pass the returned `meta.seed`
-    back to page through one feed or to replay a list exactly.
+    **Discovery**: `GET /api/v1/songs?sort=discover` is a shuffled feed for home screens and radio,
+    `GET /api/v1/songs/{id}/next` is up next after a song, and `GET /api/v1/songs/recommend` builds a list
+    from seeds (songs, artists, genres). All are weighted at random, so they change between seeds but stay
+    ordered by fit. Pass the returned `meta.seed` back to page through one feed or to replay a list exactly.
+
+    ### Getting good recommendations (read this)
+    Recommendations come from a **taste profile**, not from names: genre mix, artists and their collaborators,
+    region, era, typical reach, length and title themes. The more real context you send, the closer they get.
+    - **Use song ids, never names.** Don't search `?q=<title>` to find "similar" songs: a text search matches
+      words, so "Sugar" brings every song called Sugar, not songs like it. Send the id to `/songs/{id}/next`
+      or `/songs/recommend?songs=`.
+    - **Send the session.** For autoplay/radio, call `/songs/{id}/next?history=<ids played before, newest
+      first>`. The history shapes the taste (a gospel session stays gospel even after one dancehall track)
+      and is never repeated. Keep the same `seed` for the whole session.
+    - **Send what was skipped** as `exclude=` so it never comes back.
+    - **Onboarding / no history yet**: `/songs/recommend?artists=Azawi,Joshua Baraka&genres=afrobeat`. A
+      seed artist brings their world (genre, collaborators, era), with at most two of their own songs.
+    - **Likes / a playlist**: `/songs/recommend?songs=<up to 10 ids, most important first>` ("more like this
+      playlist").
+    - **Steer it**: `region=` (ug, ke, tz, rw, ng, gh, za, africa, global), `minYear=`/`maxYear=` ("2000s
+      throwbacks": `minYear=2000&maxYear=2009`), `popularity=` 0-100 (100 = hits, 0 = deep cuts).
+    - Versions of a seed song (remix, live, acoustic, covers) are never suggested; songs follow songs and
+      mixes follow mixes.
 
     Crawls run in the background: a `POST` returns **202** with the run; follow it at
     `GET /api/v1/crawl/runs/{id}`. Each source runs one crawl at a time (**409** otherwise).
@@ -498,11 +517,12 @@ paths:
   /api/v1/songs/{id}/next:
     get:
       tags: [songs]
-      summary: Up next — what to play after a song
+      summary: Up next — what to play after a song (send the session history)
       description: |
-        Recommendations for after song `{id}`, best suited first (weighted at random, so a replay doesn't repeat
-        the same list unless the seed is the same). Not just "more of the same title or artist": each candidate is
-        weighed by
+        Recommendations for after song `{id}`, from a taste profile of that song **and the recent history**
+        (`history`): the song playing counts most, earlier plays less. Best suited first (weighted at random, so
+        a replay doesn't repeat the same list unless the seed is the same). Not "more of the same title or
+        artist": each candidate is weighed by
         - **genre** (also near spellings: "Afro Beat" and "Afrobeats"),
         - **collaborators**: artists the song features, artists who feature its artist, and artists sharing a guest,
         - **region** (the song's own, or `region`),
@@ -512,13 +532,18 @@ paths:
 
         Never another version of the same song (remixes, live, acoustic, "official audio", other artists' covers of
         the title). The same artist appears at most twice, never back to back. Songs follow songs, mixes follow mixes.
-        For radio/autoplay: send the ids already played in `exclude` and the same `seed` across calls.
+        For radio/autoplay: send the ids played before in `history` (newest first), skipped ones in `exclude`,
+        and the same `seed` across calls.
+
+        Example session: playing 812 after 640 and 77, the listener skipped 95:
+        `GET /api/v1/songs/812/next?history=640,77&exclude=95&seed=session-42&limit=10`
       parameters:
         - { name: id, in: path, required: true, schema: { type: integer } }
         - { name: limit, in: query, schema: { type: integer, default: 20, minimum: 1, maximum: 50 } }
+        - { name: history, in: query, schema: { type: string, example: '640,77' }, description: 'Song ids played before this one, newest first (up to 50; the last 9 shape the taste). Never suggested again.' }
         - { name: region, in: query, schema: { type: string, enum: [ug, ke, tz, rw, ng, gh, za, africa, global] }, description: "Favour this region (default: the song's own)." }
         - { name: seed, in: query, schema: { type: string }, description: 'Any text: the same seed gives the same list. Default: changes every hour (returned in meta.seed).' }
-        - { name: exclude, in: query, schema: { type: string, example: '12,345,6789' }, description: Comma-separated song ids already played (up to 200). }
+        - { name: exclude, in: query, schema: { type: string, example: '12,345,6789' }, description: Comma-separated song ids never to suggest (skipped, disliked; up to 200). }
       responses:
         '200':
           description: Recommended songs, best first
@@ -539,6 +564,48 @@ paths:
                           seed: { type: string }
         '400': { $ref: '#/components/responses/BadRequest' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/songs/recommend:
+    get:
+      tags: [songs]
+      summary: Recommendations from seeds — songs, artists, genres (radio, "more like this", onboarding)
+      description: |
+        Builds a taste profile from the seeds and returns the songs that fit it best (weighted at random; the
+        same `seed` gives the same list). Give at least one seed. See "Getting good recommendations" above.
+
+        | Use | Call |
+        |---|---|
+        | More like this song | `?songs=812` |
+        | More like this playlist / likes | `?songs=812,640,77,12` (most important first, up to 10) |
+        | Onboarding (picked artists and genres) | `?artists=Azawi,Joshua Baraka&genres=afrobeat,rnb` |
+        | Throwbacks like this | `?songs=812&minYear=2000&maxYear=2009` |
+        | Hits only / deep cuts | `?genres=gospel&popularity=100` / `&popularity=10` |
+        | Kenyan songs like these | `?songs=812,640&region=ke` |
+      parameters:
+        - { name: songs, in: query, schema: { type: string, example: '812,640,77' }, description: 'Seed song ids, most important first (up to 10). Seed songs and their other versions are never returned.' }
+        - { name: artists, in: query, schema: { type: string, example: 'Azawi,Joshua Baraka' }, description: 'Seed artist names, comma-separated (up to 5). Brings their genre and collaborators; at most two songs of each seed artist.' }
+        - { name: genres, in: query, schema: { type: string, example: 'afrobeat,gospel' }, description: Seed genres, comma-separated (up to 5). }
+        - { name: region, in: query, schema: { type: string, enum: [ug, ke, tz, rw, ng, gh, za, africa, global] } }
+        - { name: minYear, in: query, schema: { type: integer, example: 2000 }, description: Released (or first seen) in or after this year. }
+        - { name: maxYear, in: query, schema: { type: integer, example: 2009 }, description: Released (or first seen) in or before this year. }
+        - { name: popularity, in: query, schema: { type: number, minimum: 0, maximum: 100 }, description: "Target reach: 100 leans to hits, 0 to deep cuts. Default: the seeds' own." }
+        - { name: exclude, in: query, schema: { type: string }, description: Song ids never to suggest (up to 200). }
+        - { name: type, in: query, schema: { type: string, enum: [song, mix] }, description: "Default: the first seed song's type, else song." }
+        - { name: limit, in: query, schema: { type: integer, default: 20, minimum: 1, maximum: 50 } }
+        - { name: seed, in: query, schema: { type: string }, description: 'Any text: the same seed gives the same list. Default: changes every hour (in meta.seed).' }
+      responses:
+        '200':
+          description: Recommended songs, best first
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/CatalogSong' } }
+                      meta: { type: object, properties: { seed: { type: string } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { description: None of the seed songs exist }
   /api/v1/songs/suggest:
     get:
       tags: [catalog]

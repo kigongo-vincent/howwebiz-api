@@ -211,14 +211,14 @@ func (s *Service) Suggest(c *fiber.Ctx) error {
 	return c.JSON(base.APIResponse{Data: out})
 }
 
-// Next is "up next" after a song: similar songs by genre, collaborators,
-// region, era, popularity, length and title themes; never another version
-// of the same song; the same artist only now and then.
+// Next is "up next" after a song, from a taste profile of the song and the
+// recent history (see Recommend).
 //
 //	?limit=    1-50 (default 20)
-//	?region=   favour a region (default: the song's own)
+//	?history=  ids played before it, newest first: shape the taste, never repeated
+//	?exclude=  ids never to suggest (skipped, disliked)
+//	?region=   favour a region (default: the songs' own)
 //	?seed=     any text; the same seed gives the same list (default: changes hourly)
-//	?exclude=  comma-separated ids already played
 func (s *Service) Next(c *fiber.Ctx) error {
 	id, ok := base.ParamID(c, "id")
 	if !ok {
@@ -232,18 +232,13 @@ func (s *Service) Next(c *fiber.Ctx) error {
 	if region != "" && !slices.Contains(Regions, region) {
 		return base.API_ERROR(c, "region must be one of: "+strings.Join(Regions, ", "))
 	}
-	var exclude []uint
-	for _, x := range strings.Split(c.Query("exclude"), ",") {
-		if n, err := strconv.ParseUint(strings.TrimSpace(x), 10, 64); err == nil && len(exclude) < 200 {
-			exclude = append(exclude, uint(n))
-		}
-	}
+	exclude, history := idList(c.Query("exclude"), 200), idList(c.Query("history"), 50)
 	seed := c.Query("seed")
 	if seed == "" {
 		seed = time.Now().UTC().Format("2006010215")
 	}
 	song, songs, err := s.Search.Next(c.UserContext(), id, NextQuery{Region: region, Limit: limit, Exclude: exclude,
-		Seed: SeedFor(seed, strconv.FormatUint(uint64(id), 10), region)})
+		History: history, Seed: SeedFor(seed, strconv.FormatUint(uint64(id), 10), region, c.Query("history"))})
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return base.API_FAIL(c, fiber.StatusNotFound, "song not found")
 	} else if err != nil {
@@ -254,4 +249,81 @@ func (s *Service) Next(c *fiber.Ctx) error {
 	}
 	return c.JSON(base.APIResponse{Data: songs,
 		Meta: fiber.Map{"after": fiber.Map{"id": song.ID, "title": song.Title, "artist": song.Artist}, "seed": seed}})
+}
+
+// idList parses "1,2,3" (invalid entries skipped, at most max).
+func idList(v string, max int) []uint {
+	var out []uint
+	for _, x := range strings.Split(v, ",") {
+		if n, err := strconv.ParseUint(strings.TrimSpace(x), 10, 64); err == nil && n > 0 && len(out) < max {
+			out = append(out, uint(n))
+		}
+	}
+	return out
+}
+
+func nameList(v string, max int) []string {
+	var out []string
+	for _, x := range strings.Split(v, ",") {
+		if x = strings.TrimSpace(x); x != "" && len(out) < max {
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+// Recommend: songs fitting a taste built from seeds (Spotify-style radio).
+//
+//	?songs=       seed song ids, most important first (e.g. recent plays, likes)
+//	?artists=     seed artist names, comma-separated
+//	?genres=      seed genres, comma-separated
+//	(at least one seed; up to 10 songs, 5 artists, 5 genres)
+//	?region=      favour a region
+//	?minYear= ?maxYear=   release years
+//	?popularity=  0-100 target reach (default: the seeds' own; 100 = hits)
+//	?exclude=     ids never to suggest
+//	?type=        song | mix (default: the first seed song's)
+//	?limit= 1-50 (default 20)   ?seed= repeatable shuffle
+func (s *Service) Recommend(c *fiber.Ctx) error {
+	q := RecommendQuery{Songs: idList(c.Query("songs"), 10), Artists: nameList(c.Query("artists"), 5),
+		Genres: nameList(c.Query("genres"), 5), Exclude: idList(c.Query("exclude"), 200),
+		MinYear: c.QueryInt("minYear"), MaxYear: c.QueryInt("maxYear"), Limit: c.QueryInt("limit", 20)}
+	if len(q.Songs)+len(q.Artists)+len(q.Genres) == 0 {
+		return base.API_ERROR(c, "give at least one seed: songs (ids), artists or genres")
+	}
+	if q.Limit < 1 || q.Limit > 50 {
+		return base.API_ERROR(c, "limit must be 1-50")
+	}
+	q.Region = strings.ToLower(c.Query("region"))
+	if q.Region != "" && !slices.Contains(Regions, q.Region) {
+		return base.API_ERROR(c, "region must be one of: "+strings.Join(Regions, ", "))
+	}
+	if v := c.Query("popularity"); v != "" {
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil || f < 0 || f > 100 {
+			return base.API_ERROR(c, "popularity must be 0-100")
+		}
+		q.Popularity = &f
+	}
+	if t := c.Query("type"); t != "" {
+		if t != KindSong && t != KindMix {
+			return base.API_ERROR(c, "type must be song or mix")
+		}
+		q.Kind = t
+	}
+	seed := c.Query("seed")
+	if seed == "" {
+		seed = time.Now().UTC().Format("2006010215")
+	}
+	q.Seed = SeedFor(seed, c.Query("songs"), c.Query("artists"), c.Query("genres"), q.Region)
+	songs, err := s.Search.Recommend(c.UserContext(), q)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return base.API_FAIL(c, fiber.StatusNotFound, "none of the seed songs exist")
+	} else if err != nil {
+		return base.API_FAIL(c, fiber.StatusInternalServerError, "failed to recommend songs")
+	}
+	for i := range songs {
+		s.orderSources(&songs[i])
+	}
+	return c.JSON(base.APIResponse{Data: songs, Meta: fiber.Map{"seed": seed}})
 }

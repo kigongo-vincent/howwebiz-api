@@ -9,7 +9,8 @@ import (
 
 func RouterRegister(r *base.RouteRegister, s *Service) {
 	r.Router.Get("/songs", s.List)
-	r.Router.Get("/songs/suggest", s.Suggest) // before /songs/:id
+	r.Router.Get("/songs/suggest", s.Suggest)     // before /songs/:id
+	r.Router.Get("/songs/recommend", s.Recommend) // before /songs/:id
 	r.Router.Get("/songs/:id", s.Get)
 	r.Router.Get("/songs/:id/next", s.Next)
 	r.Router.Get("/providers", s.ProvidersList)
