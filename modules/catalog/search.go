@@ -255,17 +255,23 @@ func (s *SearchService) fuzzyIDs(ctx context.Context, gen string, words []string
 			out[w] = ids
 			continue
 		}
+		// Each lookup has its own deadline: on a busy database, typo
+		// matching is dropped for this word rather than failing the search
+		// (and a failure is never cached as "no typo matches").
+		wctx, cancel := context.WithTimeout(ctx, fuzzyWordTimeout)
 		var n int64
-		if err := s.DB.WithContext(ctx).Raw(`SELECT COUNT(*) FROM (SELECT 1 FROM catalog_songs WHERE search_text LIKE ? ESCAPE '\' LIMIT ?) hits`,
+		if err := s.DB.WithContext(wctx).Raw(`SELECT COUNT(*) FROM (SELECT 1 FROM catalog_songs WHERE search_text LIKE ? ESCAPE '\' LIMIT ?) hits`,
 			"%"+likeEscape(w)+"%", rareWordHits).Scan(&n).Error; err != nil {
+			cancel()
 			continue
 		}
 		ids = []uint{}
 		if n < rareWordHits {
 			// the closest few hundred only: a typo stands for one intended
 			// word, not every word sharing some letters with it
-			if err := s.DB.WithContext(ctx).Raw(`SELECT id FROM catalog_songs WHERE ? <% search_text ORDER BY word_similarity(?, search_text) DESC, id LIMIT ?`,
+			if err := s.DB.WithContext(wctx).Raw(`SELECT id FROM catalog_songs WHERE ? <% search_text ORDER BY word_similarity(?, search_text) DESC, id LIMIT ?`,
 				w, w, fuzzyMaxSongs).Scan(&ids).Error; err != nil {
+				cancel()
 				continue
 			}
 		}
@@ -273,8 +279,14 @@ func (s *SearchService) fuzzyIDs(ctx context.Context, gen string, words []string
 			// Nothing as typed, nothing within the usual typo distance: look
 			// further rather than answer nothing ("essense" -> "Essence",
 			// similarity 0.57). Few songs only: these are long shots.
-			ids = s.looseIDs(ctx, w)
+			loose, ok := s.looseIDs(wctx, w)
+			if !ok {
+				cancel()
+				continue
+			}
+			ids = loose
 		}
+		cancel()
 		out[w] = ids
 		s.Cache.Set(ctx, key, ids, s.CountTTL)
 	}
@@ -287,20 +299,26 @@ const looseFuzzyThreshold = 0.45
 
 // looseIDs finds the songs closest to w at looseFuzzyThreshold: the GIN
 // index answers <% at whatever threshold the transaction sets.
-func (s *SearchService) looseIDs(ctx context.Context, w string) []uint {
+func (s *SearchService) looseIDs(ctx context.Context, w string) ([]uint, bool) {
 	var ids []uint
-	_ = s.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := s.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Exec(fmt.Sprintf("SET LOCAL pg_trgm.word_similarity_threshold = %.2f", looseFuzzyThreshold)).Error; err != nil {
 			return err
 		}
 		return tx.Raw(`SELECT id FROM catalog_songs WHERE ? <% search_text ORDER BY word_similarity(?, search_text) DESC, id LIMIT ?`,
 			w, w, fuzzyMaxSongs/4).Scan(&ids).Error
 	})
+	if err != nil {
+		return nil, false
+	}
 	if ids == nil {
 		ids = []uint{}
 	}
-	return ids
+	return ids, true
 }
+
+// fuzzyWordTimeout: the most typo matching may take per word.
+const fuzzyWordTimeout = 2500 * time.Millisecond
 
 // cacheKey is a stable digest of the parts of a query that shape a result.
 func cacheKey(parts ...any) string {
@@ -477,6 +495,7 @@ func (s *SearchService) Search(ctx context.Context, q Query) (Result, error) {
 				sort = "relevance"
 			}
 		}
+		candidates := int64(-1) // relevance: how many candidates were scored
 		m := matcher{words: words, folded: folded, indexed: s.textIndexed.Load()}
 		if s.Fuzzy && m.indexed {
 			m.fuzzy = s.fuzzyIDs(ctx, gen, words)
@@ -486,11 +505,11 @@ func (s *SearchService) Search(ctx context.Context, q Query) (Result, error) {
 				// Blend: any song matching a word (as typed, squashed, or with a
 				// typo) is a candidate; the score below ranks the closest first.
 				// Only a bounded candidate set is scored (see candidates).
-				u := m.candidates()
-				var ids []uint
-				if err := s.DB.WithContext(ctx).Raw("SELECT id FROM "+u.SQL+" AS u", u.Vars...).Scan(&ids).Error; err != nil {
+				ids, err := s.candidateIDs(ctx, m)
+				if err != nil {
 					return err
 				}
+				candidates = int64(len(ids))
 				if len(ids) == 0 {
 					db = db.Where("1 = 0")
 				} else {
@@ -516,8 +535,11 @@ func (s *SearchService) Search(ctx context.Context, q Query) (Result, error) {
 			var n int64
 			var err error
 			if filtered {
-				sub := db.Session(&gorm.Session{}).Select("1").Limit(FilteredCountCap)
-				err = s.DB.WithContext(ctx).Table("(?) AS capped", sub).Count(&n).Error
+				// a short deadline: a total is worth less than the answer
+				cctx, cancel := context.WithTimeout(ctx, countTimeout)
+				sub := db.Session(&gorm.Session{}).WithContext(cctx).Select("1").Limit(FilteredCountCap)
+				err = s.DB.WithContext(cctx).Table("(?) AS capped", sub).Count(&n).Error
+				cancel()
 			} else if s.Cache.Get(ctx, lastKey, &n) {
 				// the whole catalog: RefreshTotals keeps this current in the
 				// background; counting 600k rows per request starved the database
@@ -531,6 +553,8 @@ func (s *SearchService) Search(ctx context.Context, q Query) (Result, error) {
 				s.Cache.Set(ctx, countKey, n, s.CountTTL)
 				s.Cache.Set(ctx, lastKey, n, upkeepStateTTL)
 			case s.Cache.Get(ctx, lastKey, &res.Total):
+			case candidates >= 0:
+				res.Total = candidates // at most this many match: the page still answers
 			case !filtered && s.estimate(ctx, &res.Total):
 				// no total known yet: Postgres's own row estimate
 			default:
@@ -669,3 +693,56 @@ func (s *SearchService) liveTimeout(left time.Duration) time.Duration {
 	t := max(avail-2*time.Second, avail*2/3)
 	return max(0, min(timeout, t))
 }
+
+// candidatePartTimeout: the most one candidate lookup may take.
+const candidatePartTimeout = 4 * time.Second
+
+// candidateIDs runs the candidate lookups in parallel, each with its own
+// deadline, and merges their ids (typo matches included). A lookup that
+// fails or is too slow is dropped; only when every one fails (and there
+// are no typo matches) is that an error.
+func (s *SearchService) candidateIDs(ctx context.Context, m matcher) ([]uint, error) {
+	qs := m.candidateQueries()
+	results := make([][]uint, len(qs))
+	errs := make([]error, len(qs))
+	var wg sync.WaitGroup
+	for i, q := range qs {
+		wg.Go(func() {
+			cctx, cancel := context.WithTimeout(ctx, candidatePartTimeout)
+			defer cancel()
+			errs[i] = s.DB.WithContext(cctx).Raw(q.SQL, q.Vars...).Scan(&results[i]).Error
+		})
+	}
+	wg.Wait()
+	seen := map[uint]bool{}
+	var ids []uint
+	add := func(list []uint) {
+		for _, id := range list {
+			if !seen[id] {
+				seen[id] = true
+				ids = append(ids, id)
+			}
+		}
+	}
+	var firstErr error
+	ok := 0
+	for i := range qs {
+		if errs[i] != nil {
+			if firstErr == nil {
+				firstErr = errs[i]
+			}
+			slog.Warn("catalog: candidate lookup dropped", "part", i, "err", errs[i])
+			continue
+		}
+		ok++
+		add(results[i])
+	}
+	add(m.fuzzyCandidates())
+	if ok == 0 && len(ids) == 0 && firstErr != nil {
+		return nil, firstErr
+	}
+	return ids, nil
+}
+
+// countTimeout: the most a filtered total may take.
+const countTimeout = 3 * time.Second

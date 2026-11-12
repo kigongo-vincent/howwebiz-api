@@ -212,52 +212,49 @@ func containsAll(text string, words []string) bool {
 // candidateCap bounds how many songs one broad lookup adds to the songs a
 // relevance search scores ("king", "edy" match tens of thousands; scoring
 // all of them took 15-35s on a busy database).
-const candidateCap = 1500
+const candidateCap = 800
 
-// candidates selects the songs a relevance search scores, from cheap,
-// separately bounded lookups:
+// candidateQueries are the lookups selecting the songs a relevance search
+// scores, most important first. Each is a standalone, bounded query, run
+// on its own (in parallel, each with its own deadline): one that is too
+// slow is dropped and the search answers from the rest, instead of the
+// whole search failing.
 //   - the whole query as a phrase or squashed (the song typed in full),
 //   - songs holding every word,
-//   - each word's typo matches (already capped, see fuzzyIDs),
-//   - songs holding any word, at most candidateCap,
 //   - for a query of only one- or two-letter words: titles starting with it
-//     (a prefix on idx_catalog_songs_title_prefix, not a scan).
+//     (a prefix on idx_catalog_songs_title_prefix, not a scan),
+//   - songs holding any word, at most candidateCap.
 //
-// The strong matches are always in; only the long tail of a broad word is
-// cut. Each lookup is wrapped as a subquery so its LIMIT is legal in a
-// UNION on both Postgres and SQLite.
-//
-// It returns the parenthesized UNION of ids. The caller fetches the ids
-// first and scores those rows by primary key: filtering on "id IN (this
-// union)" let Postgres pick a full table scan plus a hash join (10s+ on a
-// busy database).
-func (m matcher) candidates() clause.Expr {
-	var parts []clause.Expr
+// Typo matches come from m.fuzzy (see fuzzyIDs), already ids.
+func (m matcher) candidateQueries() []clause.Expr {
+	var out []clause.Expr
 	limited := func(where clause.Expr, n int) {
-		parts = append(parts, clause.Expr{
-			SQL:  fmt.Sprintf("SELECT id FROM (SELECT id FROM catalog_songs WHERE %s LIMIT %d) AS c%d", where.SQL, n, len(parts)),
-			Vars: where.Vars})
+		out = append(out, clause.Expr{SQL: fmt.Sprintf("SELECT id FROM catalog_songs WHERE %s LIMIT %d", where.SQL, n), Vars: where.Vars})
 	}
 	if len(m.words) > 1 {
 		phrase := m.exact(strings.Join(m.words, " "))
 		squashed := m.exact(strings.Join(m.words, ""))
-		limited(clause.Expr{SQL: "(" + phrase.SQL + " OR " + squashed.SQL + ")", Vars: append(phrase.Vars, squashed.Vars...)}, 500)
+		limited(clause.Expr{SQL: "(" + phrase.SQL + " OR " + squashed.SQL + ")", Vars: append(phrase.Vars, squashed.Vars...)}, 300)
 		limited(m.all(), candidateCap)
-	}
-	for _, w := range m.words {
-		if m.canFuzz(w) {
-			parts = append(parts, clause.Expr{SQL: "SELECT id FROM catalog_songs WHERE id IN (?)", Vars: []any{m.fuzzy[w]}})
-		}
 	}
 	short := true
 	for _, w := range m.words {
 		short = short && utf8.RuneCountInString(w) < 3
 	}
 	if short && m.folded != "" {
-		limited(clause.Expr{SQL: `LOWER(title) LIKE ? ESCAPE '\'`, Vars: []any{likeEscape(strings.ToLower(m.folded)) + "%"}}, 500)
+		limited(clause.Expr{SQL: `LOWER(title) LIKE ? ESCAPE '\'`, Vars: []any{likeEscape(strings.ToLower(m.folded)) + "%"}}, 300)
 	}
 	limited(m.exactAny(), candidateCap)
-	return join(parts, " UNION ")
+	return out
+}
+
+// fuzzyCandidates: every word's typo matches.
+func (m matcher) fuzzyCandidates() []uint {
+	var out []uint
+	for _, w := range m.words {
+		out = append(out, m.fuzzy[w]...)
+	}
+	return out
 }
 
 // exactAny: any word as typed (no typo branches: those are added apart).

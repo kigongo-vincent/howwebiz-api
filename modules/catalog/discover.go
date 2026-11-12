@@ -356,31 +356,64 @@ func (s *SearchService) Discover(ctx context.Context, q DiscoverQuery) ([]Song, 
 	if len(ordered) > discoverPool {
 		ordered = ordered[:discoverPool]
 	}
-	total := int64(len(ordered))
+	// The feed is the shuffled pool, then the rest of the catalog newest
+	// first: its total is the catalog's, and scrolling never runs dry.
+	total := max(int64(len(ordered)), s.catalogTotal(ctx, q))
 	from := (q.Page - 1) * q.Limit
-	if from >= len(ordered) {
-		return []Song{}, total, nil
+	if from < len(ordered) {
+		page := ordered[from:min(from+q.Limit, len(ordered))]
+		songs, _, err := s.withSources(ctx, page)
+		return songs, total, err
 	}
-	page := ordered[from:min(from+q.Limit, len(ordered))]
-	songs, _, err := s.withSources(ctx, page)
+	pool := make([]uint, len(ordered))
+	for i, c := range ordered {
+		pool[i] = c.ID
+	}
+	db := s.discoverBase(ctx, q).Order("first_seen_at DESC").Order("id DESC").Offset(from - len(ordered)).Limit(q.Limit)
+	if len(pool) > 0 {
+		db = db.Where("id NOT IN ?", pool)
+	}
+	var rest []Song
+	if err := db.Select(poolColumns).Find(&rest).Error; err != nil {
+		return nil, total, err
+	}
+	songs, _, err := s.withSources(ctx, rest)
 	return songs, total, err
+}
+
+// catalogTotal: how many songs the feed's filters match (the totals
+// RefreshTotals keeps, else the last count a list made, else the
+// planner's estimate for the whole catalog; 0 when unknown).
+func (s *SearchService) catalogTotal(ctx context.Context, q DiscoverQuery) int64 {
+	var n int64
+	filters := []any{"", Fold(q.Artist), strings.ToLower(q.Genre), "", "", q.Kind}
+	if s.Cache.Get(ctx, "count-last:"+cacheKey(filters...), &n) {
+		return n
+	}
+	if q.Artist == "" && q.Genre == "" && s.estimate(ctx, &n) {
+		return n
+	}
+	return 0
+}
+
+// discoverBase: the feed's filters.
+func (s *SearchService) discoverBase(ctx context.Context, q DiscoverQuery) *gorm.DB {
+	db := s.DB.WithContext(ctx).Model(&Song{}).Where("audio_url <> ''")
+	if q.Kind != "all" {
+		db = db.Where("kind = ?", q.Kind)
+	}
+	if q.Genre != "" {
+		db = db.Where("LOWER(genre) = ?", strings.ToLower(q.Genre))
+	}
+	if q.Artist != "" {
+		db = db.Where("key LIKE ? ESCAPE '\\'", likeEscape(Fold(q.Artist))+"|%")
+	}
+	return db
 }
 
 // discoverPool reads and scores a feed's candidates (see Discover).
 func (s *SearchService) discoverPool(ctx context.Context, q DiscoverQuery, now time.Time) ([]scored, error) {
-	base := func() *gorm.DB {
-		db := s.DB.WithContext(ctx).Model(&Song{}).Where("audio_url <> ''")
-		if q.Kind != "all" {
-			db = db.Where("kind = ?", q.Kind)
-		}
-		if q.Genre != "" {
-			db = db.Where("LOWER(genre) = ?", strings.ToLower(q.Genre))
-		}
-		if q.Artist != "" {
-			db = db.Where("key LIKE ? ESCAPE '\\'", likeEscape(Fold(q.Artist))+"|%")
-		}
-		return db
-	}
+	base := func() *gorm.DB { return s.discoverBase(ctx, q) }
 	p := &pools{seen: map[uint]bool{}}
 	p.add(base().Order("plays DESC").Order("id DESC").Limit(200))         // the hits
 	p.add(base().Order("first_seen_at DESC").Order("id DESC").Limit(200)) // what's new

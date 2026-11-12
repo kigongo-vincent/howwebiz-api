@@ -298,3 +298,29 @@ func TestShufflesReuseCachedPool(t *testing.T) {
 		t.Fatal("recommend: another seed should give another order")
 	}
 }
+
+func TestDiscoverReportsCatalogTotal(t *testing.T) {
+	s := seedCatalog(t)
+	s.Cache = cache.New(miniredis.RunT(t).Addr(), "t:")
+	ctx := context.Background()
+	if err := s.RefreshTotals(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// pretend the catalog is much larger than the shuffled pool
+	s.Cache.Set(ctx, "count-last:"+cacheKey("", "", "", "", "", KindSong), int64(728000), time.Hour)
+	_, total, err := s.Discover(ctx, DiscoverQuery{Kind: KindSong, Seed: 1, Page: 1, Limit: 10})
+	if err != nil || total != 728000 {
+		t.Fatalf("total %d (%v), want the catalog's 728000", total, err)
+	}
+	// past the pool: the rest of the catalog, never the pool's songs again
+	first, _, _ := s.Discover(ctx, DiscoverQuery{Kind: KindSong, Seed: 1, Page: 1, Limit: 100})
+	deep, _, err := s.Discover(ctx, DiscoverQuery{Kind: KindSong, Seed: 1, Page: 2, Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range deep {
+		if slices.ContainsFunc(first, func(f Song) bool { return f.ID == d.ID }) {
+			t.Fatalf("song %d repeated past the pool", d.ID)
+		}
+	}
+}
